@@ -7,7 +7,7 @@ pub async fn execute(session: &str, json: bool) -> i32 {
             if json {
                 println!("{}", serde_json::to_string_pretty(&processes).unwrap());
             } else {
-                println!("{:<12} {:<8} {:<10} {:<6} {}", "NAME", "PID", "STATE", "EXIT", "UPTIME");
+                println!("{:<12} {:<8} {:<10} {:<6} UPTIME", "NAME", "PID", "STATE", "EXIT");
                 for p in &processes {
                     let state = match p.state { ProcessState::Running => "running", ProcessState::Exited => "exited" };
                     let exit = p.exit_code.map(|c| c.to_string()).unwrap_or("-".into());

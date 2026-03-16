@@ -15,9 +15,13 @@ pub fn is_daemon_alive(pid_path: &Path) -> bool {
 
 pub struct IdCounter { next_id: u32 }
 
+impl Default for IdCounter {
+    fn default() -> Self { Self::new() }
+}
+
 impl IdCounter {
     pub fn new() -> Self { Self { next_id: 1 } }
-    pub fn next(&mut self) -> String {
+    pub fn next_id(&mut self) -> String {
         let id = format!("p{}", self.next_id);
         self.next_id += 1;
         id

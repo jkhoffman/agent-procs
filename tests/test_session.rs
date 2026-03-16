@@ -29,7 +29,7 @@ fn test_is_daemon_alive_returns_true_for_current_process() {
 #[test]
 fn test_next_process_id_increments() {
     let mut counter = IdCounter::new();
-    assert_eq!(counter.next(), "p1");
-    assert_eq!(counter.next(), "p2");
-    assert_eq!(counter.next(), "p3");
+    assert_eq!(counter.next_id(), "p1");
+    assert_eq!(counter.next_id(), "p2");
+    assert_eq!(counter.next_id(), "p3");
 }

@@ -39,7 +39,7 @@ impl ProcessManager {
     }
 
     pub async fn spawn_process(&mut self, command: &str, name: Option<String>, cwd: Option<&str>) -> Response {
-        let id = self.id_counter.next();
+        let id = self.id_counter.next_id();
         let name = name.unwrap_or_else(|| id.clone());
 
         if self.processes.contains_key(&name) {
