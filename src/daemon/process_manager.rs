@@ -54,6 +54,14 @@ impl ProcessManager {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
+        // Put child in its own process group so we can signal the entire tree
+        unsafe {
+            cmd.pre_exec(|| {
+                nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                Ok(())
+            });
+        }
 
         let mut child = match cmd.spawn()
         {
@@ -98,9 +106,9 @@ impl ProcessManager {
         if let Some(ref child) = proc.child {
             let raw_pid = child.id().unwrap_or(0) as i32;
             if raw_pid > 0 {
-                // Send SIGTERM first
-                let pid = nix::unistd::Pid::from_raw(raw_pid);
-                let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM);
+                // Signal the entire process group (child PID == PGID due to setpgid in pre_exec)
+                let pgid = nix::unistd::Pid::from_raw(raw_pid);
+                let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
             }
         }
 
@@ -116,10 +124,14 @@ impl ProcessManager {
                     proc.exit_code = status.code();
                 }
                 _ => {
-                    // Timed out or error — force kill
-                    let _ = child.kill().await;
-                    let status = child.wait().await;
-                    proc.exit_code = status.ok().and_then(|s| s.code());
+                    // Timed out or error — force kill the process group
+                    let raw_pid = proc.pid as i32;
+                    if raw_pid > 0 {
+                        let pgid = nix::unistd::Pid::from_raw(raw_pid);
+                        let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
+                    }
+                    let _ = child.wait().await;
+                    proc.exit_code = Some(-9);
                 }
             }
             proc.child = None;
