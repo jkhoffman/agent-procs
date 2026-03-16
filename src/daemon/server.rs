@@ -12,11 +12,13 @@ use super::process_manager::ProcessManager;
 
 pub struct DaemonState {
     pub process_manager: ProcessManager,
+    pub proxy_port: Option<u16>,
 }
 
 pub async fn run(session: &str, socket_path: &Path) {
     let state = Arc::new(Mutex::new(DaemonState {
         process_manager: ProcessManager::new(session),
+        proxy_port: None,
     }));
 
     let listener = match UnixListener::bind(socket_path) {
@@ -91,7 +93,7 @@ pub async fn run(session: &str, socket_path: &Path) {
 
                 let is_shutdown = matches!(request, Request::Shutdown);
 
-                let response = handle_request(&state, request).await;
+                let response = handle_request(&state, &shutdown, request).await;
                 let _ = send_response(&writer, &response).await;
 
                 if is_shutdown {
@@ -160,7 +162,11 @@ async fn handle_follow_stream(
     let _ = send_response(writer, &Response::LogEnd).await;
 }
 
-async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Response {
+async fn handle_request(
+    state: &Arc<Mutex<DaemonState>>,
+    shutdown: &Arc<tokio::sync::Notify>,
+    request: Request,
+) -> Response {
     match request {
         Request::Run {
             command,
@@ -169,12 +175,25 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
             env,
             port,
         } => {
-            state
-                .lock()
-                .await
+            let mut s = state.lock().await;
+            let proxy_port = s.proxy_port;
+            let mut resp = s
                 .process_manager
                 .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port)
-                .await
+                .await;
+            drop(s);
+            if let Response::RunOk {
+                ref name,
+                ref mut url,
+                port: Some(_),
+                ..
+            } = resp
+            {
+                if let Some(pp) = proxy_port {
+                    *url = Some(format!("http://{}.localhost:{}", name, pp));
+                }
+            }
+            resp
         }
         Request::Stop { target } => {
             state
@@ -193,7 +212,21 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
                 .restart_process(&target)
                 .await
         }
-        Request::Status => state.lock().await.process_manager.status(),
+        Request::Status => {
+            let mut s = state.lock().await;
+            let proxy_port = s.proxy_port;
+            let mut resp = s.process_manager.status();
+            if let Some(pp) = proxy_port {
+                if let Response::Status { ref mut processes } = resp {
+                    for p in processes.iter_mut() {
+                        if p.port.is_some() {
+                            p.url = Some(format!("http://{}.localhost:{}", p.name, pp));
+                        }
+                    }
+                }
+            }
+            resp
+        }
         Request::Wait {
             target,
             until,
@@ -258,10 +291,39 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
                 message: "daemon shutting down".into(),
             }
         }
-        Request::EnableProxy { proxy_port: _ } => Response::Error {
-            code: 1,
-            message: "proxy not yet implemented".into(),
-        },
+        Request::EnableProxy { proxy_port } => {
+            let mut s = state.lock().await;
+            if let Some(existing_port) = s.proxy_port {
+                return Response::Ok {
+                    message: format!(
+                        "Proxy already listening on http://localhost:{}",
+                        existing_port
+                    ),
+                };
+            }
+
+            let port = match super::proxy::find_available_proxy_port(proxy_port) {
+                Ok(p) => p,
+                Err(e) => return Response::Error { code: 1, message: e },
+            };
+
+            s.proxy_port = Some(port);
+            s.process_manager.proxy_enabled = true;
+            drop(s);
+
+            let proxy_state = Arc::clone(state);
+            let proxy_shutdown = Arc::clone(shutdown);
+            tokio::spawn(async move {
+                if let Err(e) = super::proxy::start_proxy(port, proxy_state, proxy_shutdown).await
+                {
+                    eprintln!("proxy error: {}", e);
+                }
+            });
+
+            Response::Ok {
+                message: format!("Proxy listening on http://localhost:{}", port),
+            }
+        }
     }
 }
 
