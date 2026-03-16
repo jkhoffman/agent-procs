@@ -5,7 +5,7 @@ Concurrent process runner for AI agents. Processes run in a background daemon an
 ## Install
 
 ```
-cargo install --path .
+cargo install agent-procs
 ```
 
 ## Quick start
