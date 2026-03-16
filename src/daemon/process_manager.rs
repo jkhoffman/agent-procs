@@ -124,7 +124,12 @@ impl ProcessManager {
         } else if self.proxy_enabled {
             match self.auto_assign_port() {
                 Ok(p) => Some(p),
-                Err(e) => return Response::Error { code: 1, message: e },
+                Err(e) => {
+                    return Response::Error {
+                        code: 1,
+                        message: e,
+                    }
+                }
             }
         } else {
             None
@@ -234,7 +239,13 @@ impl ProcessManager {
         );
 
         let url = resolved_port.map(|p| format!("http://127.0.0.1:{}", p));
-        Response::RunOk { name, id, pid, port: resolved_port, url }
+        Response::RunOk {
+            name,
+            id,
+            pid,
+            port: resolved_port,
+            url,
+        }
     }
 
     pub async fn stop_process(&mut self, target: &str) -> Response {

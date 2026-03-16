@@ -1,0 +1,37 @@
+{
+  "eval_id": 2,
+  "eval_name": "background-server-testing",
+  "prompt": "I need to start my Rails server in the background so I can keep working on code. It takes about 10 seconds to boot and prints 'Listening on http://0.0.0.0:3000' when ready. After it's up I want to run the integration test suite against it, and then shut everything down.",
+  "assertions": [
+    {
+      "id": "uses_agent_procs_run",
+      "description": "Uses agent-procs run to start the server, not nohup or &",
+      "check": "programmatic"
+    },
+    {
+      "id": "gives_process_a_name",
+      "description": "Uses --name flag to name the server process",
+      "check": "programmatic"
+    },
+    {
+      "id": "uses_wait_with_pattern",
+      "description": "Uses agent-procs wait with --until to detect readiness",
+      "check": "programmatic"
+    },
+    {
+      "id": "has_timeout",
+      "description": "Wait command includes --timeout with a reasonable value (>= 10s)",
+      "check": "programmatic"
+    },
+    {
+      "id": "runs_tests_after_wait",
+      "description": "Integration tests execute after the wait command",
+      "check": "programmatic"
+    },
+    {
+      "id": "cleans_up",
+      "description": "Uses agent-procs stop (or stop-all) to shut down after tests",
+      "check": "programmatic"
+    }
+  ]
+}

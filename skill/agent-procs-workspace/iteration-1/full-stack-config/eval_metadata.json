@@ -1,0 +1,42 @@
+{
+  "eval_id": 1,
+  "eval_name": "full-stack-config",
+  "prompt": "I have a project with a Postgres database, a Python FastAPI backend in ./api, and a React frontend in ./web. The backend needs DATABASE_URL set and the frontend needs VITE_API_URL. Can you write me an agent-procs.yaml and then start everything up? The backend listens on port 8000 and the frontend on 5173.",
+  "assertions": [
+    {
+      "id": "config_has_three_processes",
+      "description": "YAML defines db, api, and frontend processes",
+      "check": "programmatic"
+    },
+    {
+      "id": "config_has_dependency_chain",
+      "description": "api depends_on db; frontend depends_on api",
+      "check": "programmatic"
+    },
+    {
+      "id": "config_has_env_vars",
+      "description": "api has DATABASE_URL, frontend has VITE_API_URL",
+      "check": "programmatic"
+    },
+    {
+      "id": "config_has_ready_patterns",
+      "description": "Each process has a ready field with a sensible pattern",
+      "check": "programmatic"
+    },
+    {
+      "id": "config_has_cwd",
+      "description": "api has cwd ./api, frontend has cwd ./web",
+      "check": "programmatic"
+    },
+    {
+      "id": "commands_use_up",
+      "description": "Commands use agent-procs up (not individual run commands)",
+      "check": "programmatic"
+    },
+    {
+      "id": "commands_verify_status",
+      "description": "Commands include agent-procs status after startup",
+      "check": "programmatic"
+    }
+  ]
+}

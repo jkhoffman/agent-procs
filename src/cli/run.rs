@@ -21,7 +21,9 @@ pub async fn execute(
         port,
     };
     match crate::cli::request(session, &req, true).await {
-        Ok(Response::RunOk { name, id, pid, url, .. }) => {
+        Ok(Response::RunOk {
+            name, id, pid, url, ..
+        }) => {
             match url {
                 Some(u) => println!("{} (id: {}, pid: {}, {})", name, id, pid, u),
                 None => println!("{} (id: {}, pid: {})", name, id, pid),

@@ -1,0 +1,22 @@
+session: fullstack
+
+processes:
+  db:
+    cmd: docker compose up postgres
+    ready: "ready to accept connections"
+
+  api:
+    cmd: uvicorn main:app --host 0.0.0.0 --port 8000
+    cwd: ./api
+    env:
+      DATABASE_URL: postgres://localhost:5432/mydb
+    ready: "Uvicorn running on"
+    depends_on: [db]
+
+  web:
+    cmd: npm run dev
+    cwd: ./web
+    env:
+      VITE_API_URL: http://localhost:8000
+    ready: "Local:"
+    depends_on: [api]

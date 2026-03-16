@@ -1,0 +1,48 @@
+{
+  "skill_name": "agent-procs",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I have a project with a Postgres database, a Python FastAPI backend in ./api, and a React frontend in ./web. The backend needs DATABASE_URL set and the frontend needs VITE_API_URL. Can you write me an agent-procs.yaml and then start everything up? The backend listens on port 8000 and the frontend on 5173.",
+      "expected_output": "A valid agent-procs.yaml with correct dependencies (db -> api -> frontend), ready patterns, env vars, and cwd fields. Then commands to start and verify the stack.",
+      "files": [],
+      "assertions": [
+        {"id": "config_has_three_processes", "description": "YAML defines db, api, and frontend processes"},
+        {"id": "config_has_dependency_chain", "description": "api depends_on db; frontend depends_on api"},
+        {"id": "config_has_env_vars", "description": "api has DATABASE_URL, frontend has VITE_API_URL"},
+        {"id": "config_has_ready_patterns", "description": "Each process has a ready field"},
+        {"id": "config_has_cwd", "description": "api has cwd ./api, frontend has cwd ./web"},
+        {"id": "commands_use_up", "description": "Commands use agent-procs up"},
+        {"id": "commands_verify_status", "description": "Commands include agent-procs status after startup"}
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I need to start my Rails server in the background so I can keep working on code. It takes about 10 seconds to boot and prints 'Listening on http://0.0.0.0:3000' when ready. After it's up I want to run the integration test suite against it, and then shut everything down.",
+      "expected_output": "Uses agent-procs run with --name, agent-procs wait with --until and --timeout, runs the tests, then agent-procs stop.",
+      "files": [],
+      "assertions": [
+        {"id": "uses_agent_procs_run", "description": "Uses agent-procs run to start the server, not nohup or &"},
+        {"id": "gives_process_a_name", "description": "Uses --name flag to name the server process"},
+        {"id": "uses_wait_with_pattern", "description": "Uses agent-procs wait with --until to detect readiness"},
+        {"id": "has_timeout", "description": "Wait command includes --timeout with a reasonable value (>= 10s)"},
+        {"id": "runs_tests_after_wait", "description": "Integration tests execute after the wait command"},
+        {"id": "cleans_up", "description": "Uses agent-procs stop or stop-all to shut down after tests"}
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I've got three microservices I need running for local dev: a gateway (port 4000), users-service (port 4001), and orders-service (port 4002). They're all in separate directories under ./services/. The gateway depends on both other services. Each one prints 'Server started' when ready. Can you set this up so I can just run one command to start everything?",
+      "expected_output": "Creates an agent-procs.yaml with all three services, correct dependency graph (gateway depends on users and orders), ready patterns, cwd fields. Uses agent-procs up to start everything.",
+      "files": [],
+      "assertions": [
+        {"id": "config_has_three_services", "description": "YAML defines gateway, users-service, and orders-service"},
+        {"id": "gateway_depends_on_both", "description": "Gateway's depends_on includes both other services"},
+        {"id": "leaf_services_independent", "description": "users-service and orders-service do not depend on each other"},
+        {"id": "config_has_ready_patterns", "description": "All services have ready patterns"},
+        {"id": "config_has_cwd", "description": "Each service has cwd under ./services/"},
+        {"id": "commands_use_up", "description": "Uses agent-procs up to start everything"}
+      ]
+    }
+  ]
+}

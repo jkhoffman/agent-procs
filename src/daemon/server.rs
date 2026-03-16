@@ -304,7 +304,12 @@ async fn handle_request(
 
             let (listener, port) = match super::proxy::bind_proxy_port(proxy_port) {
                 Ok(pair) => pair,
-                Err(e) => return Response::Error { code: 1, message: e },
+                Err(e) => {
+                    return Response::Error {
+                        code: 1,
+                        message: e,
+                    }
+                }
             };
 
             s.proxy_port = Some(port);

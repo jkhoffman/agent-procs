@@ -91,12 +91,12 @@ pub async fn execute(
 
         for (name, result) in &results {
             match result {
-                Ok(Response::RunOk { name, id, pid, url, .. }) => {
-                    match url {
-                        Some(u) => println!("started {} (id: {}, pid: {}, {})", name, id, pid, u),
-                        None => println!("started {} (id: {}, pid: {})", name, id, pid),
-                    }
-                }
+                Ok(Response::RunOk {
+                    name, id, pid, url, ..
+                }) => match url {
+                    Some(u) => println!("started {} (id: {}, pid: {}, {})", name, id, pid, u),
+                    None => println!("started {} (id: {}, pid: {})", name, id, pid),
+                },
                 Ok(Response::Error { code, message }) => {
                     eprintln!("error starting {}: {}", name, message);
                     return *code;

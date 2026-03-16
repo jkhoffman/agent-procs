@@ -15,9 +15,15 @@ pub async fn execute(session: &str, json: bool) -> i32 {
             } else {
                 let has_urls = processes.iter().any(|p| p.url.is_some());
                 if has_urls {
-                    println!("{:<12} {:<8} {:<10} {:<6} {:<30} UPTIME", "NAME", "PID", "STATE", "EXIT", "URL");
+                    println!(
+                        "{:<12} {:<8} {:<10} {:<6} {:<30} UPTIME",
+                        "NAME", "PID", "STATE", "EXIT", "URL"
+                    );
                 } else {
-                    println!("{:<12} {:<8} {:<10} {:<6} UPTIME", "NAME", "PID", "STATE", "EXIT");
+                    println!(
+                        "{:<12} {:<8} {:<10} {:<6} UPTIME",
+                        "NAME", "PID", "STATE", "EXIT"
+                    );
                 }
                 for p in &processes {
                     let state = match p.state {
@@ -28,9 +34,15 @@ pub async fn execute(session: &str, json: bool) -> i32 {
                     let uptime = p.uptime_secs.map(format_uptime).unwrap_or("-".into());
                     if has_urls {
                         let url = p.url.as_deref().unwrap_or("-");
-                        println!("{:<12} {:<8} {:<10} {:<6} {:<30} {}", p.name, p.pid, state, exit, url, uptime);
+                        println!(
+                            "{:<12} {:<8} {:<10} {:<6} {:<30} {}",
+                            p.name, p.pid, state, exit, url, uptime
+                        );
                     } else {
-                        println!("{:<12} {:<8} {:<10} {:<6} {}", p.name, p.pid, state, exit, uptime);
+                        println!(
+                            "{:<12} {:<8} {:<10} {:<6} {}",
+                            p.name, p.pid, state, exit, uptime
+                        );
                     }
                 }
             }

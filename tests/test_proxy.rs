@@ -89,14 +89,7 @@ fn test_run_without_port_has_no_url() {
 
     let output = Command::cargo_bin("agent-procs")
         .unwrap()
-        .args([
-            "--session",
-            &ctx.session,
-            "run",
-            "sleep 60",
-            "--name",
-            "bg",
-        ])
+        .args(["--session", &ctx.session, "run", "sleep 60", "--name", "bg"])
         .output()
         .unwrap();
 

@@ -83,7 +83,9 @@ pub async fn start_proxy(
     state: Arc<Mutex<DaemonState>>,
     shutdown: Arc<tokio::sync::Notify>,
 ) -> Result<(), String> {
-    std_listener.set_nonblocking(true).map_err(|e| format!("set_nonblocking: {}", e))?;
+    std_listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("set_nonblocking: {}", e))?;
     let listener = TcpListener::from_std(std_listener)
         .map_err(|e| format!("failed to convert listener: {}", e))?;
 
@@ -189,10 +191,7 @@ async fn handle_proxy_request(
     // Build the forwarded request
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let path_and_query = uri
-        .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or("/");
+    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
     let new_uri = format!("http://127.0.0.1:{}{}", backend_port, path_and_query);
 
     let mut builder = Request::builder().method(method).uri(&new_uri);
@@ -200,10 +199,7 @@ async fn handle_proxy_request(
     // Copy headers, rewriting Host
     for (key, value) in req.headers() {
         if key == hyper::header::HOST {
-            builder = builder.header(
-                hyper::header::HOST,
-                format!("127.0.0.1:{}", backend_port),
-            );
+            builder = builder.header(hyper::header::HOST, format!("127.0.0.1:{}", backend_port));
         } else {
             builder = builder.header(key, value);
         }
@@ -259,10 +255,7 @@ fn status_page(state: &DaemonState, proxy_port: u16) -> HyperResponse<BoxBody> {
                         p.name, proxy_port, port, state_str
                     ));
                 } else {
-                    body.push_str(&format!(
-                        "  {} (no port) [{}]\n",
-                        p.name, state_str
-                    ));
+                    body.push_str(&format!("  {} (no port) [{}]\n", p.name, state_str));
                 }
             }
         }
