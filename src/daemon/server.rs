@@ -308,7 +308,7 @@ async fn handle_request(
             };
 
             s.proxy_port = Some(port);
-            s.process_manager.proxy_enabled = true;
+            s.process_manager.enable_proxy();
             drop(s);
 
             let proxy_state = Arc::clone(state);

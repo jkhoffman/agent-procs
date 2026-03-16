@@ -43,7 +43,7 @@ pub struct ProcessManager {
     id_counter: IdCounter,
     session: String,
     pub output_tx: broadcast::Sender<OutputLine>,
-    pub proxy_enabled: bool,
+    proxy_enabled: bool,
     next_auto_port: u16,
 }
 
@@ -68,7 +68,7 @@ impl ProcessManager {
 
         for i in 0..range_size {
             let candidate = AUTO_PORT_MIN
-                + ((self.next_auto_port - AUTO_PORT_MIN) as usize + i) as u16 % (range_size as u16);
+                + (((self.next_auto_port - AUTO_PORT_MIN) as usize + i) % range_size) as u16;
             if assigned.contains(&candidate) {
                 continue;
             }
@@ -318,33 +318,15 @@ impl ProcessManager {
             .await
     }
 
+    pub fn enable_proxy(&mut self) {
+        self.proxy_enabled = true;
+    }
+
     pub fn status(&mut self) -> Response {
         self.refresh_exit_states();
-        let mut infos: Vec<ProcessInfo> = self
-            .processes
-            .values()
-            .map(|p| ProcessInfo {
-                name: p.name.clone(),
-                id: p.id.clone(),
-                pid: p.pid,
-                state: if p.child.is_some() {
-                    ProcessState::Running
-                } else {
-                    ProcessState::Exited
-                },
-                exit_code: p.exit_code,
-                uptime_secs: if p.child.is_some() {
-                    Some(p.started_at.elapsed().as_secs())
-                } else {
-                    None
-                },
-                command: p.command.clone(),
-                port: p.port,
-                url: p.port.map(|port| format!("http://127.0.0.1:{}", port)),
-            })
-            .collect();
-        infos.sort_by(|a, b| a.name.cmp(&b.name));
-        Response::Status { processes: infos }
+        Response::Status {
+            processes: self.build_process_infos(),
+        }
     }
 
     /// Returns `None` if process not found or still running.
@@ -383,8 +365,15 @@ impl ProcessManager {
             .and_then(|p| if p.child.is_some() { p.port } else { None })
     }
 
+    /// Non-mutating status snapshot for use by the proxy status page.
+    /// May show stale exit states since it skips `refresh_exit_states()`.
     pub fn status_snapshot(&self) -> Response {
-        // Like status() but takes &self not &mut self (no refresh_exit_states)
+        Response::Status {
+            processes: self.build_process_infos(),
+        }
+    }
+
+    fn build_process_infos(&self) -> Vec<ProcessInfo> {
         let mut infos: Vec<ProcessInfo> = self
             .processes
             .values()
@@ -409,7 +398,7 @@ impl ProcessManager {
             })
             .collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));
-        Response::Status { processes: infos }
+        infos
     }
 
     fn find(&self, target: &str) -> Option<&ManagedProcess> {

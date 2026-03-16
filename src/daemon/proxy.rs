@@ -76,6 +76,8 @@ pub fn extract_subdomain(host: &str) -> Option<String> {
     }
 }
 
+type HttpClient = Client<hyper_util::client::legacy::connect::HttpConnector, Incoming>;
+
 /// Start the reverse proxy HTTP server.
 pub async fn start_proxy(
     proxy_port: u16,
@@ -86,6 +88,9 @@ pub async fn start_proxy(
     let listener = TcpListener::bind(addr)
         .await
         .map_err(|e| format!("failed to bind proxy on {}: {}", addr, e))?;
+
+    // Single client instance shared across all requests (connection pool via Arc)
+    let client: HttpClient = Client::builder(TokioExecutor::new()).build_http();
 
     loop {
         let (stream, _remote_addr) = tokio::select! {
@@ -102,13 +107,16 @@ pub async fn start_proxy(
         };
 
         let state = Arc::clone(&state);
+        let client = client.clone();
         let pp = proxy_port;
 
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
+            let client = client.clone();
             let svc = service_fn(move |req: Request<Incoming>| {
                 let state = Arc::clone(&state);
-                async move { handle_proxy_request(req, state, pp).await }
+                let client = client.clone();
+                async move { handle_proxy_request(req, state, client, pp).await }
             });
 
             if let Err(e) = http1::Builder::new()
@@ -129,6 +137,7 @@ pub async fn start_proxy(
 async fn handle_proxy_request(
     req: Request<Incoming>,
     state: Arc<Mutex<DaemonState>>,
+    client: HttpClient,
     proxy_port: u16,
 ) -> Result<HyperResponse<BoxBody>, hyper::Error> {
     // Extract subdomain from Host header
@@ -149,19 +158,19 @@ async fn handle_proxy_request(
         }
     };
 
-    // Look up the process port (single lock acquisition)
-    let backend_port = {
+    // Single lock acquisition for both port lookup and existence check
+    let (backend_port, process_exists) = {
         let s = state.lock().await;
-        s.process_manager.get_process_port(&process_name)
+        (
+            s.process_manager.get_process_port(&process_name),
+            s.process_manager.has_process(&process_name),
+        )
     };
 
     let backend_port = match backend_port {
         Some(port) => port,
         None => {
-            // Check if process exists at all
-            let s = state.lock().await;
-            let exists = s.process_manager.has_process(&process_name);
-            let msg = if exists {
+            let msg = if process_exists {
                 format!(
                     "502 Bad Gateway: process '{}' is running but has no port assigned",
                     process_name
@@ -203,9 +212,6 @@ async fn handle_proxy_request(
     }
 
     let forwarded_req = builder.body(req.into_body()).unwrap();
-
-    // Send request to backend using hyper-util client
-    let client = Client::builder(TokioExecutor::new()).build_http();
 
     match client.request(forwarded_req).await {
         Ok(resp) => {
