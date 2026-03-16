@@ -12,6 +12,19 @@ const DEFAULT_MAX_LOG_BYTES: u64 = 50 * 1024 * 1024; // 50MB
 const AUTO_PORT_MIN: u16 = 4000;
 const AUTO_PORT_MAX: u16 = 4999;
 
+/// Returns true if `name` is a valid DNS label: 1-63 lowercase alphanumeric/hyphen
+/// chars, not starting or ending with a hyphen.
+pub fn is_valid_dns_label(name: &str) -> bool {
+    if name.is_empty() || name.len() > 63 {
+        return false;
+    }
+    if name.starts_with('-') || name.ends_with('-') {
+        return false;
+    }
+    name.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 pub struct ManagedProcess {
     pub name: String,
     pub id: String,
@@ -91,6 +104,17 @@ impl ProcessManager {
             return Response::Error {
                 code: 1,
                 message: format!("invalid process name: {}", name),
+            };
+        }
+
+        // When proxy is active, names must be valid DNS labels for subdomain routing
+        if self.proxy_enabled && !is_valid_dns_label(&name) {
+            return Response::Error {
+                code: 1,
+                message: format!(
+                    "invalid process name for proxy: '{}' (must be lowercase alphanumeric/hyphens, max 63 chars)",
+                    name
+                ),
             };
         }
 
