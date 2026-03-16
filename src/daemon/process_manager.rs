@@ -9,6 +9,8 @@ use tokio::process::{Child, Command};
 use tokio::sync::broadcast;
 
 const DEFAULT_MAX_LOG_BYTES: u64 = 50 * 1024 * 1024; // 50MB
+const AUTO_PORT_MIN: u16 = 4000;
+const AUTO_PORT_MAX: u16 = 4999;
 
 pub struct ManagedProcess {
     pub name: String,
@@ -28,6 +30,8 @@ pub struct ProcessManager {
     id_counter: IdCounter,
     session: String,
     pub output_tx: broadcast::Sender<OutputLine>,
+    pub proxy_enabled: bool,
+    next_auto_port: u16,
 }
 
 impl ProcessManager {
@@ -38,7 +42,37 @@ impl ProcessManager {
             id_counter: IdCounter::new(),
             session: session.to_string(),
             output_tx,
+            proxy_enabled: false,
+            next_auto_port: AUTO_PORT_MIN,
         }
+    }
+
+    fn auto_assign_port(&mut self) -> Result<u16, String> {
+        let start = self.next_auto_port;
+        let assigned: std::collections::HashSet<u16> =
+            self.processes.values().filter_map(|p| p.port).collect();
+        let range_size = (AUTO_PORT_MAX - AUTO_PORT_MIN + 1) as usize;
+
+        for i in 0..range_size {
+            let candidate = AUTO_PORT_MIN
+                + ((self.next_auto_port - AUTO_PORT_MIN) as usize + i) as u16 % (range_size as u16);
+            if assigned.contains(&candidate) {
+                continue;
+            }
+            // Bind-test: if we can bind, the port is free (listener drops immediately)
+            if std::net::TcpListener::bind(("127.0.0.1", candidate)).is_ok() {
+                self.next_auto_port = if candidate >= AUTO_PORT_MAX {
+                    AUTO_PORT_MIN
+                } else {
+                    candidate + 1
+                };
+                return Ok(candidate);
+            }
+        }
+        Err(format!(
+            "no free port available in range {}-{} (started at {})",
+            AUTO_PORT_MIN, AUTO_PORT_MAX, start
+        ))
     }
 
     pub async fn spawn_process(
@@ -60,6 +94,18 @@ impl ProcessManager {
             };
         }
 
+        // Resolve the port: use explicit port, auto-assign if proxy is enabled, or None
+        let resolved_port = if let Some(p) = port {
+            Some(p)
+        } else if self.proxy_enabled {
+            match self.auto_assign_port() {
+                Ok(p) => Some(p),
+                Err(e) => return Response::Error { code: 1, message: e },
+            }
+        } else {
+            None
+        };
+
         if self.processes.contains_key(&name) {
             return Response::Error {
                 code: 1,
@@ -78,7 +124,7 @@ impl ProcessManager {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
-        if let Some(p) = port {
+        if let Some(p) = resolved_port {
             // Inject PORT and HOST; user-supplied env takes precedence
             let mut merged_env: HashMap<String, String> = HashMap::new();
             merged_env.insert("PORT".to_string(), p.to_string());
@@ -159,12 +205,12 @@ impl ProcessManager {
                 pid,
                 started_at: Instant::now(),
                 exit_code: None,
-                port,
+                port: resolved_port,
             },
         );
 
-        let url = port.map(|p| format!("http://127.0.0.1:{}", p));
-        Response::RunOk { name, id, pid, port, url }
+        let url = resolved_port.map(|p| format!("http://127.0.0.1:{}", p));
+        Response::RunOk { name, id, pid, port: resolved_port, url }
     }
 
     pub async fn stop_process(&mut self, target: &str) -> Response {
