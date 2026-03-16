@@ -5,3 +5,4 @@ pub mod config;
 pub mod session;
 pub mod daemon;
 pub mod cli;
+pub mod tui;

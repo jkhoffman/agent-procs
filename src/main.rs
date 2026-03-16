@@ -75,6 +75,8 @@ enum Commands {
         #[command(subcommand)]
         command: SessionCommands,
     },
+    /// Open terminal UI for monitoring processes
+    Ui,
 }
 
 #[derive(Subcommand)]
@@ -117,6 +119,7 @@ async fn main() {
             SessionCommands::List => agent_procs::cli::session_cmd::list().await,
             SessionCommands::Clean => agent_procs::cli::session_cmd::clean().await,
         },
+        Commands::Ui => agent_procs::tui::run(session).await,
     };
     std::process::exit(exit_code);
 }
