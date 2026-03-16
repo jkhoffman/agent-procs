@@ -3,6 +3,7 @@ use crate::protocol::{Request, Response};
 use std::io::{BufRead, BufReader};
 use std::fs::File;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute(
     session: &str, target: Option<&str>, tail: usize,
     follow: bool, stderr: bool, all: bool, timeout: Option<u64>, lines: Option<usize>,
