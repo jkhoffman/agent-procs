@@ -33,7 +33,7 @@ Ports are assigned to processes when the user opts in via `port:` in config, `--
 - Strategy: sequential starting from 4000, skipping unavailable ports
 - Availability check: bind-test via `TcpListener::bind("127.0.0.1:<port>")` — if it succeeds, close immediately and assign. If not, skip to next.
 - Tiny TOCTOU window between releasing the port and the child binding it. Acceptable for local dev.
-- Assigned ports are stored in `ManagedProcess` and persisted in `state.json` so restarts reuse the same port.
+- Assigned ports are stored in `ManagedProcess`. On restart, the same port is reused (carried through the stop/respawn cycle in memory). On daemon restart (full `down`/`up` cycle), ports are re-assigned fresh — this is fine since URLs are stable by name, not by port number.
 
 ### Explicit Port (`port: 3001` or `--port 3001`)
 
@@ -88,7 +88,30 @@ URL value depends on context:
 | off | yes | `Some("http://127.0.0.1:<port>")` |
 | on | yes | `Some("http://<name>.localhost:<proxy_port>")` |
 
-No new request types. Existing `Status` and `Run` requests return the enriched types.
+### `Request::Run` (request changes)
+
+```rust
+Run {
+    command: String,
+    name: Option<String>,
+    cwd: Option<String>,
+    env: Option<HashMap<String, String>>,
+    port: Option<u16>,            // new — explicit port assignment
+}
+```
+
+The `--proxy` flag is not part of the Run request. It is a daemon-level concern:
+- For `up`, the daemon reads `proxy: true` from the config file directly.
+- For `run --proxy`, the CLI sends a new `EnableProxy` request before the `Run` request.
+
+```rust
+// New request type:
+EnableProxy {
+    proxy_port: Option<u16>,      // explicit port, or auto-assign
+}
+```
+
+The daemon starts the proxy listener on first `EnableProxy` and returns the assigned proxy port. Subsequent `EnableProxy` requests are no-ops (proxy already running). This is idempotent — multiple `run --proxy` calls don't conflict.
 
 ## Reverse Proxy
 
@@ -98,7 +121,7 @@ The proxy starts when:
 - `proxy: true` in config and `agent-procs up` is run
 - `--proxy` flag is passed to `run` or `up`
 
-It does not start otherwise. Once started for a session, it remains running until `agent-procs down`.
+It does not start otherwise. Once started for a session, it remains running for all processes in that session until `agent-procs down`. A `--proxy` flag on one `run` command enables the proxy for the entire session — subsequent `run` commands in that session are automatically routable without passing `--proxy` again.
 
 ### Architecture
 
@@ -121,8 +144,8 @@ Browser/agent/curl
 ### Proxy Port
 
 - Auto-assigned from range 9090–9190, first available (bind-tested)
-- Pinnable via `proxy_port:` in config or flag
-- Persisted in `state.json` so restarts reuse the same port
+- Pinnable via `proxy_port:` in config or `EnableProxy { proxy_port }` request
+- Stored in daemon memory; re-assigned on full daemon restart
 - Each session gets its own proxy port — no cross-session collision
 
 ### Routing Rules
@@ -143,8 +166,10 @@ Browser/agent/curl
 
 ### Dependencies
 
-- `hyper` for HTTP server and client (tokio already pulls in most of the transport layer)
-- No other new dependencies
+- `hyper` + `hyper-util` for HTTP server and client
+- `http` for HTTP types (Request, Response, StatusCode)
+- `tokio-tungstenite` for WebSocket proxying (or defer WebSocket support to a follow-up if it inflates scope)
+- tokio already provides the async runtime and TCP primitives
 
 ## Config Changes
 
@@ -172,7 +197,7 @@ web:
 pub struct Config {
     pub proxy: Option<bool>,          // new
     pub proxy_port: Option<u16>,      // new
-    pub processes: IndexMap<String, ProcessDef>,
+    pub processes: HashMap<String, ProcessDef>,
 }
 
 pub struct ProcessDef {
@@ -259,9 +284,14 @@ No new subcommands. The proxy is a daemon feature — it starts with the daemon 
 ### Process Lifecycle
 
 - Process crashes → proxy returns `502: process "api" is not running`
-- Process restarts → route updates immediately (live lookup)
-- New process added while proxy running → immediately routable
+- Process restarts → reuses the same assigned port (carried in `ManagedProcess`); route updates immediately (live lookup)
+- New process added while proxy running → immediately routable (if proxy is active for the session, auto-assigns port)
 - Process stopped → `502` on its subdomain, other routes unaffected
+- Process just started but not yet listening → proxy returns `502 Bad Gateway` until the child binds its port. Use `ready:` in config or `wait --until` for `run`-based workflows to know when the backend is reachable.
+
+### Name Validation
+
+When proxy mode is active, process names must be valid DNS labels: lowercase alphanumeric and hyphens only, max 63 characters, cannot start or end with a hyphen. Names violating this are rejected at spawn time with a clear error. This is stricter than the current validation (which only rejects path traversal characters) but only applies when the proxy is on.
 
 ### DNS
 
@@ -282,14 +312,14 @@ No new subcommands. The proxy is a daemon feature — it starts with the daemon 
 
 | File | Changes |
 |------|---------|
-| `src/protocol.rs` | Add `port`, `url` fields to `ProcessInfo` and `RunOk` |
+| `src/protocol.rs` | Add `port`, `url` fields to `ProcessInfo` and `RunOk`; add `port` to `Request::Run`; add `EnableProxy` request/response |
 | `src/config.rs` | Add `proxy`, `proxy_port` to `Config`; add `port` to `ProcessDef` |
-| `src/daemon/process_manager.rs` | Track port in `ManagedProcess`, port assignment logic, inject PORT/HOST env |
+| `src/daemon/process_manager.rs` | Track port in `ManagedProcess`, port auto-assignment + bind-test, inject PORT/HOST env, DNS name validation when proxy active |
 | `src/daemon/server.rs` | Add `TcpListener` in select loop, HTTP request handler, routing |
-| `src/cli/run.rs` | Add `--port` and `--proxy` flags |
-| `src/cli/up.rs` | Port assignment during config-driven startup |
+| `src/cli/run.rs` | Add `--port` and `--proxy` flags; send `EnableProxy` request when `--proxy` is set |
+| `src/cli/up.rs` | Pass `port` from config to `Run` request; send `EnableProxy` when config has `proxy: true` |
 | `src/cli/status.rs` | Display URL column |
-| `Cargo.toml` | Add `hyper` dependency |
+| `Cargo.toml` | Add `hyper`, `hyper-util`, `http` dependencies (and `tokio-tungstenite` if WebSocket support is in v1 scope) |
 
 ## New Files
 
@@ -299,4 +329,4 @@ src/daemon/proxy.rs    # HTTP reverse proxy: listener, router, request forwardin
 
 ## Estimated Scope
 
-~250-300 lines of new code. No refactoring of existing code required.
+~300-400 lines of new code (higher if WebSocket proxying is included in v1). No refactoring of existing code required.
