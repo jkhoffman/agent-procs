@@ -16,15 +16,26 @@ pub async fn wait_for(
     mut check_exit: impl FnMut() -> Option<Option<i32>>,
 ) -> Response {
     let compiled_regex = if use_regex {
-        pattern.and_then(|p| regex::Regex::new(p).ok())
+        match pattern {
+            Some(p) => match regex::Regex::new(p) {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    return Response::Error {
+                        code: 1,
+                        message: format!("invalid regex: {}", e),
+                    }
+                }
+            },
+            None => None,
+        }
     } else {
         None
     };
 
     // Check if already exited before we start waiting
     if wait_exit {
-        if let Some(Some(code)) = check_exit() {
-            return Response::WaitExited { exit_code: code };
+        if let Some(exit_code) = check_exit() {
+            return Response::WaitExited { exit_code };
         }
     }
 
@@ -46,8 +57,8 @@ pub async fn wait_for(
                         }
                         // After each line, check if process exited (for --exit mode)
                         if wait_exit {
-                            if let Some(Some(code)) = check_exit() {
-                                return Response::WaitExited { exit_code: code };
+                            if let Some(exit_code) = check_exit() {
+                                return Response::WaitExited { exit_code };
                             }
                         }
                     }
@@ -55,8 +66,8 @@ pub async fn wait_for(
                     Err(broadcast::error::RecvError::Closed) => {
                         if wait_exit {
                             // Channel closed — process likely exited
-                            if let Some(Some(code)) = check_exit() {
-                                return Response::WaitExited { exit_code: code };
+                            if let Some(exit_code) = check_exit() {
+                                return Response::WaitExited { exit_code };
                             }
                         }
                         return Response::Error { code: 1, message: "output channel closed".into() };

@@ -1,6 +1,7 @@
 use crate::cli;
 use crate::config::{load_config, resolve_session};
 use crate::protocol::{Request, Response};
+use futures::future::join_all;
 
 pub async fn execute(
     cli_session: Option<&str>,
@@ -28,74 +29,104 @@ pub async fn execute(
     };
 
     for group in &groups {
-        for name in group {
-            if let Some(ref only) = only_set {
-                if !only.contains(&name.as_str()) {
-                    continue;
-                }
-            }
+        let names: Vec<&String> = group
+            .iter()
+            .filter(|name| {
+                only_set
+                    .as_ref()
+                    .is_none_or(|only| only.contains(&name.as_str()))
+            })
+            .collect();
 
-            let def = &config.processes[name];
+        // Start all processes in this group concurrently
+        let start_futures: Vec<_> = names
+            .iter()
+            .map(|name| {
+                let def = &config.processes[*name];
 
-            // Resolve cwd relative to config file directory
-            let resolved_cwd = def.cwd.as_ref().map(|c| {
-                let p = std::path::Path::new(c);
-                if p.is_relative() {
-                    path.parent()
-                        .unwrap_or(std::path::Path::new("."))
-                        .join(p)
-                        .to_string_lossy()
-                        .to_string()
+                let resolved_cwd = def.cwd.as_ref().map(|c| {
+                    let p = std::path::Path::new(c);
+                    if p.is_relative() {
+                        path.parent()
+                            .unwrap_or(std::path::Path::new("."))
+                            .join(p)
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        c.clone()
+                    }
+                });
+
+                let env = if def.env.is_empty() {
+                    None
                 } else {
-                    c.clone()
+                    Some(def.env.clone())
+                };
+
+                let req = Request::Run {
+                    command: def.cmd.clone(),
+                    name: Some((*name).clone()),
+                    cwd: resolved_cwd,
+                    env,
+                };
+                let name = (*name).clone();
+                async move {
+                    let result = cli::request(session, &req, true).await;
+                    (name, result)
                 }
-            });
+            })
+            .collect();
 
-            // Pass env vars through the protocol (no shell escaping needed)
-            let env = if def.env.is_empty() {
-                None
-            } else {
-                Some(def.env.clone())
-            };
+        let results = join_all(start_futures).await;
 
-            // Start the process
-            let req = Request::Run {
-                command: def.cmd.clone(),
-                name: Some(name.clone()),
-                cwd: resolved_cwd,
-                env,
-            };
-            match cli::request(session, &req, true).await {
-                Ok(Response::RunOk { name, id, pid }) => {
+        for (name, result) in &results {
+            match result {
+                Ok(Response::RunOk { name, id, pid, .. }) => {
                     println!("started {} (id: {}, pid: {})", name, id, pid);
                 }
                 Ok(Response::Error { code, message }) => {
                     eprintln!("error starting {}: {}", name, message);
-                    return code;
+                    return *code;
                 }
                 _ => return 1,
             }
+        }
 
-            // Wait for ready pattern
-            if let Some(ref ready) = def.ready {
-                let req = Request::Wait {
-                    target: name.clone(),
-                    until: Some(ready.clone()),
-                    regex: false,
-                    exit: false,
-                    timeout_secs: Some(30),
-                };
-                match cli::request(session, &req, false).await {
-                    Ok(Response::WaitMatch { .. }) => println!("{} is ready", name),
-                    Ok(Response::WaitTimeout) => {
-                        eprintln!("warning: {} did not become ready within 30s", name);
+        // Wait for ready patterns concurrently within the group
+        let ready_futures: Vec<_> = names
+            .iter()
+            .filter_map(|name| {
+                let def = &config.processes[*name];
+                def.ready.as_ref().map(|ready| {
+                    let req = Request::Wait {
+                        target: (*name).clone(),
+                        until: Some(ready.clone()),
+                        regex: false,
+                        exit: false,
+                        timeout_secs: Some(30),
+                    };
+                    let name = (*name).clone();
+                    async move {
+                        let result = cli::request(session, &req, false).await;
+                        (name, result)
                     }
-                    Ok(Response::Error { message, .. }) => {
-                        eprintln!("error waiting for {}: {}", name, message);
-                        return 1;
-                    }
-                    _ => {}
+                })
+            })
+            .collect();
+
+        let ready_results = join_all(ready_futures).await;
+
+        for (name, result) in &ready_results {
+            match result {
+                Ok(Response::WaitMatch { .. }) => println!("{} is ready", name),
+                Ok(Response::WaitTimeout) => {
+                    eprintln!("warning: {} did not become ready within 30s", name);
                 }
+                Ok(Response::Error { message, .. }) => {
+                    eprintln!("error waiting for {}: {}", name, message);
+                    return 1;
+                }
+                _ => {}
             }
         }
     }

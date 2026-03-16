@@ -13,6 +13,7 @@ use crossterm::{
 use futures::StreamExt;
 use ratatui::prelude::*;
 use std::io;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
@@ -58,7 +59,15 @@ pub async fn run(session: &str) -> i32 {
         original_hook(panic_info);
     }));
 
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout)).unwrap();
+    let mut terminal = match Terminal::new(CrosstermBackend::new(stdout)) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+            eprintln!("error: failed to initialize terminal: {}", e);
+            return 1;
+        }
+    };
     let mut app = App::new();
 
     // Channel for events from background tasks
@@ -100,9 +109,16 @@ pub async fn run(session: &str) -> i32 {
         }
     });
 
+    // Track reconnection attempts for backoff
+    let reconnect_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
     // Main render loop
     while app.running {
-        terminal.draw(|f| ui::draw(f, &app)).unwrap();
+        if let Err(e) = terminal.draw(|f| ui::draw(f, &app)) {
+            eprintln!("error: terminal draw failed: {}", e);
+            break;
+        }
 
         // Wait for next event
         if let Some(event) = rx.recv().await {
@@ -157,13 +173,20 @@ pub async fn run(session: &str) -> i32 {
                     app.update_processes(processes);
                 }
                 AppEvent::OutputStreamClosed => {
-                    // Try to reconnect after a brief delay
-                    let session_str = session.to_string();
-                    let reconnect_tx = tx.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        output_stream_reader(&session_str, reconnect_tx).await;
-                    });
+                    let count = reconnect_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if count < MAX_RECONNECT_ATTEMPTS {
+                        let session_str = session.to_string();
+                        let reconnect_tx = tx.clone();
+                        let rc = Arc::clone(&reconnect_count);
+                        tokio::spawn(async move {
+                            // Exponential backoff: 2s, 4s, 8s, ... capped at 30s
+                            let delay = Duration::from_secs(2u64.saturating_pow(count).min(30));
+                            tokio::time::sleep(delay).await;
+                            output_stream_reader(&session_str, reconnect_tx).await;
+                            // Reset counter on successful reconnection
+                            rc.store(0, std::sync::atomic::Ordering::Relaxed);
+                        });
+                    }
                 }
             }
         }
@@ -201,7 +224,10 @@ async fn output_stream_reader(session: &str, tx: mpsc::Sender<AppEvent>) {
         timeout_secs: None, // infinite — TUI manages its own lifetime
         lines: None,
     };
-    let mut json = serde_json::to_string(&req).unwrap();
+    let mut json = match serde_json::to_string(&req) {
+        Ok(j) => j,
+        Err(_) => return,
+    };
     json.push('\n');
     if writer.write_all(json.as_bytes()).await.is_err() {
         return;

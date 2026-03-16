@@ -1,6 +1,9 @@
 use std::env;
 use std::path::PathBuf;
 
+/// macOS limits Unix socket paths to 103 bytes; Linux allows 107.
+const MAX_SOCKET_PATH_LEN: usize = 103;
+
 /// Base directory for sockets and PID files: /tmp/agent-procs-<uid>/
 /// Short fixed path to avoid macOS 103-byte socket path limit.
 pub fn socket_base_dir() -> PathBuf {
@@ -9,7 +12,17 @@ pub fn socket_base_dir() -> PathBuf {
 }
 
 pub fn socket_path(session: &str) -> PathBuf {
-    socket_base_dir().join(format!("{}.sock", session))
+    let path = socket_base_dir().join(format!("{}.sock", session));
+    if path.as_os_str().len() > MAX_SOCKET_PATH_LEN {
+        eprintln!(
+            "warning: socket path exceeds {} bytes ({} bytes): {:?}. \
+             Use a shorter session name.",
+            MAX_SOCKET_PATH_LEN,
+            path.as_os_str().len(),
+            path
+        );
+    }
+    path
 }
 
 pub fn pid_path(session: &str) -> PathBuf {
@@ -22,7 +35,7 @@ pub fn state_dir(session: &str) -> PathBuf {
     let base = match env::var("XDG_STATE_HOME") {
         Ok(dir) => PathBuf::from(dir),
         Err(_) => {
-            let home = env::var("HOME").expect("HOME not set");
+            let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
             PathBuf::from(home).join(".local/state")
         }
     };

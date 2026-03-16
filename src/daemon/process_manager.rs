@@ -50,6 +50,14 @@ impl ProcessManager {
         let id = self.id_counter.next_id();
         let name = name.unwrap_or_else(|| id.clone());
 
+        // Reject names that could cause path traversal in log files
+        if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains('\0') {
+            return Response::Error {
+                code: 1,
+                message: format!("invalid process name: {}", name),
+            };
+        }
+
         if self.processes.contains_key(&name) {
             return Response::Error {
                 code: 1,
@@ -251,10 +259,17 @@ impl ProcessManager {
         Response::Status { processes: infos }
     }
 
+    /// Returns `None` if process not found or still running.
+    /// Returns `Some(exit_code)` if process has exited (exit_code is None for signal kills).
     pub fn is_process_exited(&mut self, target: &str) -> Option<Option<i32>> {
         self.refresh_exit_states();
-        self.find(target)
-            .map(|p| if p.child.is_none() { p.exit_code } else { None })
+        self.find(target).and_then(|p| {
+            if p.child.is_none() {
+                Some(p.exit_code)
+            } else {
+                None
+            }
+        })
     }
 
     fn refresh_exit_states(&mut self) {

@@ -36,7 +36,7 @@ pub async fn request(session: &str, req: &Request, auto_spawn: bool) -> Result<R
     let stream = connect(session, auto_spawn).await?;
     let (reader, mut writer) = stream.into_split();
 
-    let mut json = serde_json::to_string(req).unwrap();
+    let mut json = serde_json::to_string(req).map_err(|e| format!("serialize error: {}", e))?;
     json.push('\n');
     writer
         .write_all(json.as_bytes())
@@ -68,7 +68,7 @@ pub async fn stream_responses(
     let stream = connect(session, auto_spawn).await?;
     let (reader, mut writer) = stream.into_split();
 
-    let mut json = serde_json::to_string(req).unwrap();
+    let mut json = serde_json::to_string(req).map_err(|e| format!("serialize error: {}", e))?;
     json.push('\n');
     writer
         .write_all(json.as_bytes())

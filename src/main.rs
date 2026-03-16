@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "agent-procs",
+    version,
     about = "Concurrent process runner for AI agents",
     long_about = "\
 Concurrent process runner for AI agents.

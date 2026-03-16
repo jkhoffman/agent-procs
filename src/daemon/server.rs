@@ -19,15 +19,31 @@ pub async fn run(session: &str, socket_path: &Path) {
         process_manager: ProcessManager::new(session),
     }));
 
-    let listener = UnixListener::bind(socket_path).expect("failed to bind socket");
+    let listener = match UnixListener::bind(socket_path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("fatal: failed to bind socket {:?}: {}", socket_path, e);
+            return;
+        }
+    };
+
+    // Shutdown signal: set to true when a Shutdown request is handled
+    let shutdown = Arc::new(tokio::sync::Notify::new());
 
     loop {
-        let (stream, _) = match listener.accept().await {
-            Ok(conn) => conn,
-            Err(_) => break,
+        let (stream, _) = tokio::select! {
+            result = listener.accept() => match result {
+                Ok(conn) => conn,
+                Err(e) => {
+                    eprintln!("warning: accept error: {}", e);
+                    continue;
+                }
+            },
+            _ = shutdown.notified() => break,
         };
 
         let state = Arc::clone(&state);
+        let shutdown = Arc::clone(&shutdown);
         tokio::spawn(async move {
             let (reader, writer) = stream.into_split();
             let writer = Arc::new(Mutex::new(writer));
@@ -79,8 +95,8 @@ pub async fn run(session: &str, socket_path: &Path) {
                 let _ = send_response(&writer, &response).await;
 
                 if is_shutdown {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    std::process::exit(0);
+                    shutdown.notify_one();
+                    return;
                 }
             }
         });
@@ -249,7 +265,8 @@ async fn send_response(
     response: &Response,
 ) -> std::io::Result<()> {
     let mut w = writer.lock().await;
-    let mut json = serde_json::to_string(response).unwrap();
+    let mut json = serde_json::to_string(response)
+        .expect("Response serialization should never fail for well-typed enums");
     json.push('\n');
     w.write_all(json.as_bytes()).await?;
     w.flush().await

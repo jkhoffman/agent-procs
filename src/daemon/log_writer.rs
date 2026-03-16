@@ -24,7 +24,13 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
     let mut lines = BufReader::new(reader).lines();
     let mut file = match tokio::fs::File::create(log_path).await {
         Ok(f) => f,
-        Err(_) => return,
+        Err(e) => {
+            eprintln!(
+                "warning: cannot create log file {:?} for {}: {}",
+                log_path, process_name, e
+            );
+            return;
+        }
     };
     let mut bytes_written: u64 = 0;
 
@@ -41,7 +47,13 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
             let _ = tokio::fs::rename(log_path, &rotated).await;
             file = match tokio::fs::File::create(log_path).await {
                 Ok(f) => f,
-                Err(_) => return,
+                Err(e) => {
+                    eprintln!(
+                        "warning: cannot recreate log file {:?} for {} after rotation: {}",
+                        log_path, process_name, e
+                    );
+                    return;
+                }
             };
             bytes_written = 0;
         }

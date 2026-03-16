@@ -5,7 +5,13 @@ pub async fn execute(session: &str, json: bool) -> i32 {
     match crate::cli::request(session, &req, false).await {
         Ok(Response::Status { processes }) => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&processes).unwrap());
+                match serde_json::to_string_pretty(&processes) {
+                    Ok(json) => println!("{}", json),
+                    Err(e) => {
+                        eprintln!("error: failed to serialize status: {}", e);
+                        return 1;
+                    }
+                }
             } else {
                 println!(
                     "{:<12} {:<8} {:<10} {:<6} UPTIME",

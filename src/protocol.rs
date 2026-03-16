@@ -63,7 +63,7 @@ pub enum Response {
         line: String,
     },
     WaitExited {
-        exit_code: i32,
+        exit_code: Option<i32>,
     },
     WaitTimeout,
     Error {

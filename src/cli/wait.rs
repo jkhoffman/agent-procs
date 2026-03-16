@@ -21,7 +21,10 @@ pub async fn execute(
             0
         }
         Ok(Response::WaitExited { exit_code }) => {
-            println!("exited with code {}", exit_code);
+            match exit_code {
+                Some(code) => println!("exited with code {}", code),
+                None => println!("exited by signal"),
+            }
             0
         }
         Ok(Response::WaitTimeout) => {
