@@ -1,19 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-pub fn runtime_dir(session: &str) -> PathBuf {
-    match env::var("XDG_RUNTIME_DIR") {
-        Ok(dir) => PathBuf::from(dir).join("agent-procs/sessions").join(session),
-        Err(_) => {
-            let uid = nix::unistd::getuid();
-            PathBuf::from(format!("/tmp/agent-procs-{}", uid))
-                .join("sessions")
-                .join(session)
-        }
-    }
-}
-
-pub fn sessions_base_dir() -> PathBuf {
+fn runtime_base() -> PathBuf {
     match env::var("XDG_RUNTIME_DIR") {
         Ok(dir) => PathBuf::from(dir).join("agent-procs/sessions"),
         Err(_) => {
@@ -21,6 +9,14 @@ pub fn sessions_base_dir() -> PathBuf {
             PathBuf::from(format!("/tmp/agent-procs-{}", uid)).join("sessions")
         }
     }
+}
+
+pub fn runtime_dir(session: &str) -> PathBuf {
+    runtime_base().join(session)
+}
+
+pub fn sessions_base_dir() -> PathBuf {
+    runtime_base()
 }
 
 pub fn state_dir(session: &str) -> PathBuf {

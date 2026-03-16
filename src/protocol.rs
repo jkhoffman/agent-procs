@@ -42,6 +42,6 @@ pub struct ProcessInfo {
 #[serde(rename_all = "lowercase")]
 pub enum ProcessState { Running, Exited }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Stream { Stdout, Stderr }

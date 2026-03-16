@@ -21,13 +21,12 @@ pub async fn execute(
     let stream = if stderr { "stderr" } else { "stdout" };
     let path = log_dir.join(format!("{}.{}", target, stream));
 
-    if !path.exists() {
-        eprintln!("error: no logs for process '{}' ({})", target, stream);
-        return 2;
-    }
-
     match tail_file(&path, tail) {
         Ok(lines) => { for line in lines { println!("{}", line); } 0 }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("error: no logs for process '{}' ({})", target, stream);
+            2
+        }
         Err(e) => { eprintln!("error reading logs: {}", e); 1 }
     }
 }
@@ -45,7 +44,7 @@ fn show_all_logs(log_dir: &std::path::Path, tail: usize) -> i32 {
         let proc_name = name.trim_end_matches(".stdout").to_string();
         if let Ok(lines) = tail_file(&entry.path(), tail) {
             for line in lines {
-                all_lines.push((proc_name.clone(), line));
+                all_lines.push((proc_name.to_string(), line));
             }
         }
     }
@@ -58,7 +57,14 @@ fn show_all_logs(log_dir: &std::path::Path, tail: usize) -> i32 {
 
 fn tail_file(path: &std::path::Path, n: usize) -> std::io::Result<Vec<String>> {
     let file = File::open(path)?;
-    let lines: Vec<String> = BufReader::new(file).lines().collect::<Result<_, _>>()?;
-    let start = lines.len().saturating_sub(n);
-    Ok(lines[start..].to_vec())
+    // Use a ring buffer to keep only the last N lines in memory
+    let mut ring: std::collections::VecDeque<String> = std::collections::VecDeque::with_capacity(n);
+    for line in BufReader::new(file).lines() {
+        let line = line?;
+        if ring.len() == n {
+            ring.pop_front();
+        }
+        ring.push_back(line);
+    }
+    Ok(ring.into_iter().collect())
 }

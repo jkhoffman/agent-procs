@@ -53,7 +53,7 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
         // Broadcast to wait engine / followers
         let _ = tx.send(OutputLine {
             process: process_name.to_string(),
-            stream: stream.clone(),
+            stream,
             line,
         });
     }

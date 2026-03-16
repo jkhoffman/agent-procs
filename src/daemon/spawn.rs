@@ -15,9 +15,8 @@ pub fn spawn_daemon(session: &str) -> std::io::Result<()> {
     let socket_path = paths::socket_path(session);
     let pid_path = paths::pid_path(session);
 
-    if socket_path.exists() {
-        fs::remove_file(&socket_path)?;
-    }
+    // Remove stale socket if present (ignore ENOENT)
+    let _ = fs::remove_file(&socket_path);
 
     // Re-exec self with a hidden flag to run as daemon
     let exe = std::env::current_exe()?;
