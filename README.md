@@ -45,7 +45,7 @@ processes:
     depends_on: [db]
 ```
 
-Fields: `cmd` (required), `cwd`, `env`, `ready` (stdout pattern that signals readiness), `depends_on`.
+Fields: `cmd` (required), `cwd`, `env`, `ready` (stdout pattern that signals readiness), `depends_on`, `port`.
 
 Processes start in dependency order; independent ones run concurrently.
 
@@ -55,11 +55,47 @@ agent-procs up --only db,api      # start specific ones
 agent-procs down                  # stop all
 ```
 
+## Reverse proxy
+
+Give processes stable named URLs instead of port numbers. Opt-in via config or CLI flag.
+
+```yaml
+proxy: true
+processes:
+  api:
+    cmd: node server.js
+    port: 3001
+    ready: "Listening"
+  web:
+    cmd: next dev
+    depends_on: [api]
+```
+
+```bash
+$ agent-procs up
+Proxy listening on http://localhost:9090
+started api (http://api.localhost:9090)
+started web (http://web.localhost:9090)
+```
+
+When `proxy: true` is set, processes without an explicit `port` get one auto-assigned from the 4000-4999 range. The `PORT` and `HOST=127.0.0.1` environment variables are injected into each process (user-provided env takes precedence).
+
+Each session gets its own proxy port (auto-assigned from 9090-9190), so two projects can both have a process named `api` without conflict.
+
+Ad-hoc usage without a config file:
+
+```bash
+agent-procs run "node server.js" --name api --port 3001 --proxy
+# → http://api.localhost:9090
+```
+
+Config fields: `proxy` (top-level, default false), `proxy_port` (top-level, optional), `port` (per-process, optional).
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `run <cmd> [--name N]` | Spawn a background process |
+| `run <cmd> [--name N] [--port P] [--proxy]` | Spawn a background process |
 | `stop <name>` | Stop a process |
 | `stop-all` | Stop all processes |
 | `restart <name>` | Restart a process |
@@ -67,7 +103,7 @@ agent-procs down                  # stop all
 | `logs <name> [--tail N] [--follow] [--stderr] [--all]` | View process output |
 | `wait <name> --until <pattern> [--regex] [--timeout N]` | Wait for output pattern |
 | `wait <name> --exit [--timeout N]` | Wait for process to exit |
-| `up [--only X,Y] [--config path]` | Start from config file |
+| `up [--only X,Y] [--config path] [--proxy]` | Start from config file |
 | `down` | Stop config-managed processes |
 | `session list` | List active sessions |
 | `session clean` | Remove stale sessions |

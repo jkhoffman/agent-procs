@@ -28,6 +28,8 @@ Exit codes:
 
 Config file format (agent-procs.yaml):
   session: myproject                          # optional, used by up/down
+  proxy: true                                 # optional, enables reverse proxy
+  proxy_port: 9095                            # optional, pin proxy port
   processes:
     db:
       cmd: docker compose up postgres
@@ -38,11 +40,13 @@ Config file format (agent-procs.yaml):
       env:
         DATABASE_URL: postgres://localhost:5432/mydb
       ready: \"Listening on :8080\"
+      port: 8080                              # optional, injected as PORT env
       depends_on: [db]
 
-  Top-level: session (optional, overridden by --session)
-  Process fields: cmd (required), cwd, env, ready (stdout pattern), depends_on
-  Processes start in dependency order; independent ones run concurrently."
+  Top-level: session, proxy, proxy_port (all optional)
+  Process fields: cmd (required), cwd, env, ready (stdout pattern), depends_on, port
+  Processes start in dependency order; independent ones run concurrently.
+  With proxy: true, processes get named URLs (e.g. http://api.localhost:9090)."
 )]
 struct Cli {
     /// Session name for isolating process groups (e.g. per-project)

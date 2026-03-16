@@ -27,12 +27,14 @@ description: "Manage concurrent background processes (dev servers, databases, bu
 # Start processes
 agent-procs run "npm run dev" --name server
 agent-procs run "cargo watch -x test" --name tests
+agent-procs run "node api.js" --name api --port 3001         # with port tracking
+agent-procs run "node api.js" --name api --port 3001 --proxy # with reverse proxy
 
 # Wait for readiness
 agent-procs wait server --until "Listening on" --timeout 30
 
 # Check status
-agent-procs status                    # table view
+agent-procs status                    # table view (shows URLs when available)
 agent-procs status --json             # machine-readable
 
 # View logs
@@ -47,6 +49,7 @@ agent-procs stop-all                   # everything in session
 
 # Config-driven
 agent-procs up                         # start all from agent-procs.yaml
+agent-procs up --proxy                 # start all with reverse proxy
 agent-procs down                       # stop all + shut down daemon
 ```
 
@@ -82,6 +85,8 @@ processes:
 
 ### Field reference
 
+**Per-process fields:**
+
 | Field | Required | Description |
 |-------|----------|-------------|
 | `cmd` | yes | Shell command to execute |
@@ -89,8 +94,15 @@ processes:
 | `env` | no | Environment variables (key: value map) |
 | `ready` | no | Stdout pattern that signals the process is ready |
 | `depends_on` | no | List of process names that must be ready first |
+| `port` | no | Port number — injected as `PORT` env var |
 
-Top-level `session` is optional and overridden by the `--session` CLI flag.
+**Top-level fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `session` | no | Session name (overridden by `--session` CLI flag) |
+| `proxy` | no | Enable reverse proxy (default: false) |
+| `proxy_port` | no | Pin proxy to a specific port (default: auto-assign from 9090-9190) |
 
 ### Using the config
 
@@ -173,9 +185,57 @@ agent-procs ui --session myproject       # specific session
 
 Keybindings: `j/k` or arrows to select process, `e` cycle stdout/stderr/both, `Space` pause, `r` restart, `x` stop, `X` stop-all, `q` quit, `Q` quit + stop all.
 
+## Reverse proxy
+
+Give processes stable named `.localhost` URLs instead of port numbers. Opt-in via `proxy: true` in config or `--proxy` on the CLI.
+
+```yaml
+proxy: true
+processes:
+  api:
+    cmd: node server.js
+    port: 3001
+    ready: "Listening"
+  web:
+    cmd: next dev
+    depends_on: [api]
+```
+
+```bash
+$ agent-procs up
+Proxy listening on http://localhost:9090
+started api (http://api.localhost:9090)
+started web (http://web.localhost:9090)
+```
+
+- Processes without an explicit `port` get one auto-assigned (4000-4999 range)
+- `PORT` and `HOST=127.0.0.1` are injected into the process env (user env takes precedence)
+- Each session gets its own proxy port — two projects can both have `api` without conflict
+- `.localhost` subdomains resolve to 127.0.0.1 natively in Chrome, Firefox, Edge (RFC 6761)
+
+**Ad-hoc (no config file):**
+```bash
+agent-procs run "node server.js" --name api --port 3001 --proxy
+```
+
+**Without proxy (just port tracking):**
+```bash
+agent-procs run "node server.js" --name api --port 3001
+agent-procs status
+# Shows: http://127.0.0.1:3001
+```
+
 ## Common recipes
 
-**Full dev stack:**
+**Full dev stack with proxy:**
+```bash
+agent-procs up                              # start from config (proxy: true)
+agent-procs status                          # verify all running, see URLs
+# ... do work ...
+agent-procs down                            # clean up when done
+```
+
+**Full dev stack (no proxy):**
 ```bash
 agent-procs up                              # start from config
 agent-procs status                          # verify all running
