@@ -10,6 +10,7 @@ fn test_run_request_roundtrip() {
             "NODE_ENV".to_string(),
             "production".to_string(),
         )])),
+        port: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     let decoded: Request = serde_json::from_str(&json).unwrap();
@@ -59,6 +60,28 @@ fn test_error_response() {
     let json = serde_json::to_string(&resp).unwrap();
     let decoded: Response = serde_json::from_str(&json).unwrap();
     assert_eq!(resp, decoded);
+}
+
+#[test]
+fn test_run_request_with_port() {
+    let req = Request::Run {
+        command: "npm run dev".into(),
+        name: Some("webserver".into()),
+        cwd: None,
+        env: None,
+        port: Some(3000),
+    };
+    let json = serde_json::to_string(&req).unwrap();
+    let decoded: Request = serde_json::from_str(&json).unwrap();
+    assert_eq!(req, decoded);
+    // Ensure backward compat: absent port field defaults to None
+    let no_port = r#"{"type":"Run","command":"npm run dev","name":"webserver"}"#;
+    let decoded2: Request = serde_json::from_str(no_port).unwrap();
+    if let Request::Run { port, .. } = decoded2 {
+        assert_eq!(port, None);
+    } else {
+        panic!("expected Run variant");
+    }
 }
 
 #[test]

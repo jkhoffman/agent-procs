@@ -167,6 +167,7 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
             name,
             cwd,
             env,
+            port: _,
         } => {
             state
                 .lock()

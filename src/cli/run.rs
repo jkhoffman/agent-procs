@@ -6,6 +6,7 @@ pub async fn execute(session: &str, command: &str, name: Option<String>) -> i32 
         name,
         cwd: None,
         env: None,
+        port: None,
     };
     match crate::cli::request(session, &req, true).await {
         Ok(Response::RunOk { name, id, pid, .. }) => {

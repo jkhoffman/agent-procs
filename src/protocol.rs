@@ -10,6 +10,8 @@ pub enum Request {
         cwd: Option<String>,
         #[serde(default)]
         env: Option<HashMap<String, String>>,
+        #[serde(default)]
+        port: Option<u16>,
     },
     Stop {
         target: String,
