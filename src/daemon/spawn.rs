@@ -7,9 +7,17 @@ use std::process::Command;
 /// current binary with the `--run-daemon SESSION` internal flag.
 /// This avoids the fork-inside-tokio-runtime problem.
 pub fn spawn_daemon(session: &str) -> std::io::Result<()> {
-    let runtime = paths::runtime_dir(session);
+    // Create socket base dir with restricted permissions
+    let socket_dir = paths::socket_base_dir();
+    fs::create_dir_all(&socket_dir)?;
+    // Set permissions to 0700 (owner only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&socket_dir, fs::Permissions::from_mode(0o700))?;
+    }
+
     let state = paths::state_dir(session);
-    fs::create_dir_all(&runtime)?;
     fs::create_dir_all(state.join("logs"))?;
 
     let socket_path = paths::socket_path(session);
@@ -57,9 +65,14 @@ pub async fn run_daemon(session: &str) {
     let pid_path = paths::pid_path(session);
 
     // Ensure dirs exist
-    let runtime = paths::runtime_dir(session);
+    let socket_dir = paths::socket_base_dir();
+    let _ = std::fs::create_dir_all(&socket_dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700));
+    }
     let state = paths::state_dir(session);
-    let _ = std::fs::create_dir_all(&runtime);
     let _ = std::fs::create_dir_all(state.join("logs"));
 
     // Write PID file

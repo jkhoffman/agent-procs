@@ -2,9 +2,9 @@ use crate::paths;
 use crate::session;
 
 pub async fn list() -> i32 {
-    let runtime_base = paths::sessions_base_dir();
+    let base = paths::socket_base_dir();
 
-    let entries = match std::fs::read_dir(&runtime_base) {
+    let entries = match std::fs::read_dir(&base) {
         Ok(e) => e,
         Err(_) => {
             println!("no active sessions");
@@ -15,32 +15,38 @@ pub async fn list() -> i32 {
     println!("{:<20} STATUS", "SESSION");
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        let pid_path = entry.path().join("daemon.pid");
-        let status = if session::is_daemon_alive(&pid_path) {
+        if !name.ends_with(".pid") { continue; }
+        let session_name = name.trim_end_matches(".pid");
+        let status = if session::is_daemon_alive(&entry.path()) {
             "running"
         } else {
             "stale"
         };
-        println!("{:<20} {}", name, status);
+        println!("{:<20} {}", session_name, status);
     }
     0
 }
 
 pub async fn clean() -> i32 {
-    let runtime_base = paths::sessions_base_dir();
+    let base = paths::socket_base_dir();
 
-    let entries = match std::fs::read_dir(&runtime_base) {
+    let entries = match std::fs::read_dir(&base) {
         Ok(e) => e,
         Err(_) => return 0,
     };
 
     for entry in entries.flatten() {
-        let pid_path = entry.path().join("daemon.pid");
-        if !session::is_daemon_alive(&pid_path) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let _ = std::fs::remove_dir_all(entry.path());
-            let _ = std::fs::remove_dir_all(paths::state_dir(&name));
-            println!("cleaned stale session: {}", name);
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".pid") { continue; }
+        let session_name = name.trim_end_matches(".pid");
+
+        if !session::is_daemon_alive(&entry.path()) {
+            // Remove socket and PID files
+            let _ = std::fs::remove_file(paths::socket_path(session_name));
+            let _ = std::fs::remove_file(paths::pid_path(session_name));
+            // Remove XDG state directory (logs, state.json)
+            let _ = std::fs::remove_dir_all(paths::state_dir(session_name));
+            println!("cleaned stale session: {}", session_name);
         }
     }
     0
