@@ -27,7 +27,10 @@ processes:
 "#;
     let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.processes["api"].cwd, Some("./backend".into()));
-    assert_eq!(config.processes["api"].env.get("DATABASE_URL").unwrap(), "postgres://localhost:5432/mydb");
+    assert_eq!(
+        config.processes["api"].env.get("DATABASE_URL").unwrap(),
+        "postgres://localhost:5432/mydb"
+    );
     assert_eq!(config.processes["api"].depends_on, vec!["db"]);
 }
 

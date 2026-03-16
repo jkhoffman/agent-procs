@@ -1,5 +1,5 @@
-use agent_procs::tui::app::*;
 use agent_procs::protocol::{ProcessInfo, ProcessState, Stream};
+use agent_procs::tui::app::*;
 
 #[test]
 fn test_output_buffer_ring_behavior() {
@@ -85,8 +85,12 @@ fn test_push_output_creates_buffer() {
 
 fn make_info(name: &str, state: ProcessState) -> ProcessInfo {
     ProcessInfo {
-        name: name.into(), id: "p1".into(), pid: 1234,
-        state, exit_code: None, uptime_secs: Some(10),
+        name: name.into(),
+        id: "p1".into(),
+        pid: 1234,
+        state,
+        exit_code: None,
+        uptime_secs: Some(10),
         command: "test".into(),
     }
 }

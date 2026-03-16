@@ -19,9 +19,11 @@ fn test_stop_kills_child_processes() {
         pid_file_str
     );
 
-    let output = Command::cargo_bin("agent-procs").unwrap()
+    let output = Command::cargo_bin("agent-procs")
+        .unwrap()
         .args(["--session", &ctx.session, "run", &cmd, "--name", "parent"])
-        .output().unwrap();
+        .output()
+        .unwrap();
     assert!(output.status.success());
 
     // Wait for child to write its PID
@@ -41,9 +43,11 @@ fn test_stop_kills_child_processes() {
     );
 
     // Stop the parent
-    let output = Command::cargo_bin("agent-procs").unwrap()
+    let output = Command::cargo_bin("agent-procs")
+        .unwrap()
         .args(["--session", &ctx.session, "stop", "parent"])
-        .output().unwrap();
+        .output()
+        .unwrap();
     assert!(output.status.success());
 
     // Wait a moment for signals to propagate
@@ -55,6 +59,8 @@ fn test_stop_kills_child_processes() {
         "child process should be dead after stop"
     );
 
-    let _ = Command::cargo_bin("agent-procs").unwrap()
-        .args(["--session", &ctx.session, "stop-all"]).output();
+    let _ = Command::cargo_bin("agent-procs")
+        .unwrap()
+        .args(["--session", &ctx.session, "stop-all"])
+        .output();
 }

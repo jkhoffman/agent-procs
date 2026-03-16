@@ -29,5 +29,9 @@ pub fn state_dir(session: &str) -> PathBuf {
     base.join("agent-procs/sessions").join(session)
 }
 
-pub fn log_dir(session: &str) -> PathBuf { state_dir(session).join("logs") }
-pub fn state_file(session: &str) -> PathBuf { state_dir(session).join("state.json") }
+pub fn log_dir(session: &str) -> PathBuf {
+    state_dir(session).join("logs")
+}
+pub fn state_file(session: &str) -> PathBuf {
+    state_dir(session).join("state.json")
+}

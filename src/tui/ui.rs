@@ -1,7 +1,7 @@
+use crate::protocol::ProcessState;
+use crate::tui::app::{App, LineSource, StreamMode};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
-use crate::protocol::ProcessState;
-use crate::tui::app::{App, StreamMode, LineSource};
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -17,7 +17,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(22), // process list
-            Constraint::Min(30),   // output
+            Constraint::Min(30),    // output
         ])
         .split(chunks[0]);
 
@@ -27,35 +27,40 @@ pub fn draw(frame: &mut Frame, app: &App) {
 }
 
 fn draw_process_list(frame: &mut Frame, app: &App, area: Rect) {
-    let items: Vec<ListItem> = app.processes.iter().enumerate().map(|(i, p)| {
-        let (indicator, style) = match p.state {
-            ProcessState::Running => ("●", Style::default().fg(Color::Green)),
-            ProcessState::Exited => {
-                if p.exit_code == Some(0) {
-                    ("✓", Style::default().fg(Color::DarkGray))
-                } else {
-                    let code = p.exit_code.map(|c| format!(" ({})", c)).unwrap_or_default();
-                    return ListItem::new(format!("✗ {}{}", p.name, code))
-                        .style(if i == app.selected {
-                            Style::default().fg(Color::Red).bg(Color::DarkGray)
-                        } else {
-                            Style::default().fg(Color::Red)
-                        });
+    let items: Vec<ListItem> = app
+        .processes
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let (indicator, style) = match p.state {
+                ProcessState::Running => ("●", Style::default().fg(Color::Green)),
+                ProcessState::Exited => {
+                    if p.exit_code == Some(0) {
+                        ("✓", Style::default().fg(Color::DarkGray))
+                    } else {
+                        let code = p.exit_code.map(|c| format!(" ({})", c)).unwrap_or_default();
+                        return ListItem::new(format!("✗ {}{}", p.name, code)).style(
+                            if i == app.selected {
+                                Style::default().fg(Color::Red).bg(Color::DarkGray)
+                            } else {
+                                Style::default().fg(Color::Red)
+                            },
+                        );
+                    }
                 }
-            }
-        };
+            };
 
-        let text = format!("{} {}", indicator, p.name);
-        let style = if i == app.selected {
-            style.bg(Color::DarkGray)
-        } else {
-            style
-        };
-        ListItem::new(text).style(style)
-    }).collect();
+            let text = format!("{} {}", indicator, p.name);
+            let style = if i == app.selected {
+                style.bg(Color::DarkGray)
+            } else {
+                style
+            };
+            ListItem::new(text).style(style)
+        })
+        .collect();
 
-    let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Processes "));
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(" Processes "));
 
     frame.render_widget(list, area);
 }
@@ -72,22 +77,32 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
 
     let lines: Vec<Line> = if let Some(buf) = app.selected_name().and_then(|n| app.buffers.get(n)) {
         match app.stream_mode {
-            StreamMode::Stdout => {
-                buf.stdout_lines().iter().map(|l| Line::from(l.to_string())).collect()
-            }
-            StreamMode::Stderr => {
-                buf.stderr_lines().iter()
-                    .map(|l| Line::from(Span::styled(l.to_string(), Style::default().fg(Color::Yellow))))
-                    .collect()
-            }
-            StreamMode::Both => {
-                buf.all_lines().iter().map(|(src, l)| {
-                    match src {
-                        LineSource::Stdout => Line::from(l.to_string()),
-                        LineSource::Stderr => Line::from(Span::styled(l.to_string(), Style::default().fg(Color::Yellow))),
-                    }
-                }).collect()
-            }
+            StreamMode::Stdout => buf
+                .stdout_lines()
+                .iter()
+                .map(|l| Line::from(l.to_string()))
+                .collect(),
+            StreamMode::Stderr => buf
+                .stderr_lines()
+                .iter()
+                .map(|l| {
+                    Line::from(Span::styled(
+                        l.to_string(),
+                        Style::default().fg(Color::Yellow),
+                    ))
+                })
+                .collect(),
+            StreamMode::Both => buf
+                .all_lines()
+                .iter()
+                .map(|(src, l)| match src {
+                    LineSource::Stdout => Line::from(l.to_string()),
+                    LineSource::Stderr => Line::from(Span::styled(
+                        l.to_string(),
+                        Style::default().fg(Color::Yellow),
+                    )),
+                })
+                .collect(),
         }
     } else {
         vec![Line::from("No output yet".to_string()).style(Style::default().fg(Color::DarkGray))]
@@ -111,8 +126,13 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let keys = " ↑↓ select  r restart  x stop  X stop-all  e stream  space pause  q quit  Q quit+stop ";
-    let counts = format!(" {} running, {} exited ", app.running_count(), app.exited_count());
+    let keys =
+        " ↑↓ select  r restart  x stop  X stop-all  e stream  space pause  q quit  Q quit+stop ";
+    let counts = format!(
+        " {} running, {} exited ",
+        app.running_count(),
+        app.exited_count()
+    );
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)

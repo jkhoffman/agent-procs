@@ -37,22 +37,39 @@ pub async fn run(session: &str, socket_path: &Path) {
                 let request: Request = match serde_json::from_str(&line) {
                     Ok(r) => r,
                     Err(e) => {
-                        let resp = Response::Error { code: 1, message: format!("invalid request: {}", e) };
+                        let resp = Response::Error {
+                            code: 1,
+                            message: format!("invalid request: {}", e),
+                        };
                         let _ = send_response(&writer, &resp).await;
                         continue;
                     }
                 };
 
                 // Handle follow requests with streaming (before handle_request)
-                if let Request::Logs { follow: true, ref target, all, timeout_secs, lines, .. } = request {
+                if let Request::Logs {
+                    follow: true,
+                    ref target,
+                    all,
+                    timeout_secs,
+                    lines,
+                    ..
+                } = request
+                {
                     let output_rx = state.lock().await.process_manager.output_tx.subscribe();
                     let max_lines = lines;
                     let target_filter = target.clone();
                     let show_all = all;
 
                     handle_follow_stream(
-                        &writer, output_rx, target_filter, show_all, timeout_secs, max_lines
-                    ).await;
+                        &writer,
+                        output_rx,
+                        target_filter,
+                        show_all,
+                        timeout_secs,
+                        max_lines,
+                    )
+                    .await;
                     continue; // Don't call handle_request
                 }
 
@@ -86,7 +103,9 @@ async fn handle_follow_stream(
                 Ok(output_line) => {
                     if !all {
                         if let Some(ref t) = target {
-                            if output_line.process != *t { continue; }
+                            if output_line.process != *t {
+                                continue;
+                            }
                         }
                     }
 
@@ -101,7 +120,9 @@ async fn handle_follow_stream(
 
                     line_count += 1;
                     if let Some(max) = max_lines {
-                        if line_count >= max { return; }
+                        if line_count >= max {
+                            return;
+                        }
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -112,8 +133,12 @@ async fn handle_follow_stream(
 
     // Apply timeout only if specified; otherwise stream indefinitely
     match timeout_secs {
-        Some(secs) => { let _ = tokio::time::timeout(Duration::from_secs(secs), stream_loop).await; }
-        None => { stream_loop.await; }
+        Some(secs) => {
+            let _ = tokio::time::timeout(Duration::from_secs(secs), stream_loop).await;
+        }
+        None => {
+            stream_loop.await;
+        }
     }
 
     let _ = send_response(writer, &Response::LogEnd).await;
@@ -121,27 +146,52 @@ async fn handle_follow_stream(
 
 async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Response {
     match request {
-        Request::Run { command, name, cwd, env } => {
-            state.lock().await.process_manager.spawn_process(&command, name, cwd.as_deref(), env.as_ref()).await
+        Request::Run {
+            command,
+            name,
+            cwd,
+            env,
+        } => {
+            state
+                .lock()
+                .await
+                .process_manager
+                .spawn_process(&command, name, cwd.as_deref(), env.as_ref())
+                .await
         }
         Request::Stop { target } => {
-            state.lock().await.process_manager.stop_process(&target).await
+            state
+                .lock()
+                .await
+                .process_manager
+                .stop_process(&target)
+                .await
         }
-        Request::StopAll => {
-            state.lock().await.process_manager.stop_all().await
-        }
+        Request::StopAll => state.lock().await.process_manager.stop_all().await,
         Request::Restart { target } => {
-            state.lock().await.process_manager.restart_process(&target).await
+            state
+                .lock()
+                .await
+                .process_manager
+                .restart_process(&target)
+                .await
         }
-        Request::Status => {
-            state.lock().await.process_manager.status()
-        }
-        Request::Wait { target, until, regex, exit, timeout_secs } => {
+        Request::Status => state.lock().await.process_manager.status(),
+        Request::Wait {
+            target,
+            until,
+            regex,
+            exit,
+            timeout_secs,
+        } => {
             // Check process exists
             {
                 let s = state.lock().await;
                 if !s.process_manager.has_process(&target) {
-                    return Response::Error { code: 2, message: format!("process not found: {}", target) };
+                    return Response::Error {
+                        code: 2,
+                        message: format!("process not found: {}", target),
+                    };
                 }
             }
             // Subscribe to output and delegate to wait engine
@@ -168,24 +218,36 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
                     };
                     result
                 },
-            ).await
+            )
+            .await
         }
         Request::Logs { follow: false, .. } => {
             // Non-follow logs are read directly from files by the CLI — no daemon involvement needed
-            Response::Error { code: 1, message: "non-follow logs are read directly from disk by CLI".into() }
+            Response::Error {
+                code: 1,
+                message: "non-follow logs are read directly from disk by CLI".into(),
+            }
         }
         Request::Logs { follow: true, .. } => {
             // Handled separately in connection loop (needs streaming)
-            Response::Error { code: 1, message: "follow requests handled in connection loop".into() }
+            Response::Error {
+                code: 1,
+                message: "follow requests handled in connection loop".into(),
+            }
         }
         Request::Shutdown => {
             state.lock().await.process_manager.stop_all().await;
-            Response::Ok { message: "daemon shutting down".into() }
+            Response::Ok {
+                message: "daemon shutting down".into(),
+            }
         }
     }
 }
 
-async fn send_response(writer: &Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>, response: &Response) -> std::io::Result<()> {
+async fn send_response(
+    writer: &Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+    response: &Response,
+) -> std::io::Result<()> {
     let mut w = writer.lock().await;
     let mut json = serde_json::to_string(response).unwrap();
     json.push('\n');

@@ -6,9 +6,10 @@ fn test_run_request_roundtrip() {
         command: "npm run dev".into(),
         name: Some("webserver".into()),
         cwd: None,
-        env: Some(std::collections::HashMap::from([
-            ("NODE_ENV".to_string(), "production".to_string()),
-        ])),
+        env: Some(std::collections::HashMap::from([(
+            "NODE_ENV".to_string(),
+            "production".to_string(),
+        )])),
     };
     let json = serde_json::to_string(&req).unwrap();
     let decoded: Request = serde_json::from_str(&json).unwrap();
@@ -19,9 +20,13 @@ fn test_run_request_roundtrip() {
 fn test_status_response_roundtrip() {
     let resp = Response::Status {
         processes: vec![ProcessInfo {
-            name: "webserver".into(), id: "p1".into(), pid: 12345,
-            state: ProcessState::Running, exit_code: None,
-            uptime_secs: Some(150), command: "npm run dev".into(),
+            name: "webserver".into(),
+            id: "p1".into(),
+            pid: 12345,
+            state: ProcessState::Running,
+            exit_code: None,
+            uptime_secs: Some(150),
+            command: "npm run dev".into(),
         }],
     };
     let json = serde_json::to_string(&resp).unwrap();
@@ -32,8 +37,11 @@ fn test_status_response_roundtrip() {
 #[test]
 fn test_wait_request_with_pattern() {
     let req = Request::Wait {
-        target: "webserver".into(), until: Some("Listening on".into()),
-        regex: false, exit: false, timeout_secs: Some(30),
+        target: "webserver".into(),
+        until: Some("Listening on".into()),
+        regex: false,
+        exit: false,
+        timeout_secs: Some(30),
     };
     let json = serde_json::to_string(&req).unwrap();
     let decoded: Request = serde_json::from_str(&json).unwrap();
@@ -42,7 +50,10 @@ fn test_wait_request_with_pattern() {
 
 #[test]
 fn test_error_response() {
-    let resp = Response::Error { code: 2, message: "process not found: foo".into() };
+    let resp = Response::Error {
+        code: 2,
+        message: "process not found: foo".into(),
+    };
     let json = serde_json::to_string(&resp).unwrap();
     let decoded: Response = serde_json::from_str(&json).unwrap();
     assert_eq!(resp, decoded);

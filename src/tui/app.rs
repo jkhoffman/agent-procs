@@ -4,10 +4,17 @@ use std::collections::{HashMap, VecDeque};
 const MAX_BUFFER_LINES: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StreamMode { Stdout, Stderr, Both }
+pub enum StreamMode {
+    Stdout,
+    Stderr,
+    Both,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LineSource { Stdout, Stderr }
+pub enum LineSource {
+    Stdout,
+    Stderr,
+}
 
 /// Single ring buffer storing all output with source tags.
 /// Stdout/stderr views are filtered from the same data — no duplication.
@@ -25,26 +32,33 @@ impl OutputBuffer {
     }
 
     pub fn push(&mut self, source: LineSource, line: String) {
-        if self.lines.len() == self.max_lines { self.lines.pop_front(); }
+        if self.lines.len() == self.max_lines {
+            self.lines.pop_front();
+        }
         self.lines.push_back((source, line));
     }
 
     pub fn stdout_lines(&self) -> Vec<&str> {
-        self.lines.iter()
+        self.lines
+            .iter()
             .filter(|(src, _)| *src == LineSource::Stdout)
             .map(|(_, s)| s.as_str())
             .collect()
     }
 
     pub fn stderr_lines(&self) -> Vec<&str> {
-        self.lines.iter()
+        self.lines
+            .iter()
             .filter(|(src, _)| *src == LineSource::Stderr)
             .map(|(_, s)| s.as_str())
             .collect()
     }
 
     pub fn all_lines(&self) -> Vec<(LineSource, &str)> {
-        self.lines.iter().map(|(src, s)| (*src, s.as_str())).collect()
+        self.lines
+            .iter()
+            .map(|(src, s)| (*src, s.as_str()))
+            .collect()
     }
 }
 
@@ -60,7 +74,9 @@ pub struct App {
 }
 
 impl Default for App {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl App {
@@ -123,7 +139,8 @@ impl App {
     }
 
     pub fn push_output(&mut self, process: &str, stream: Stream, line: &str) {
-        let buf = self.buffers
+        let buf = self
+            .buffers
             .entry(process.to_string())
             .or_insert_with(|| OutputBuffer::new(MAX_BUFFER_LINES));
         let source = match stream {
@@ -143,10 +160,16 @@ impl App {
     }
 
     pub fn running_count(&self) -> usize {
-        self.processes.iter().filter(|p| p.state == crate::protocol::ProcessState::Running).count()
+        self.processes
+            .iter()
+            .filter(|p| p.state == crate::protocol::ProcessState::Running)
+            .count()
     }
 
     pub fn exited_count(&self) -> usize {
-        self.processes.iter().filter(|p| p.state == crate::protocol::ProcessState::Exited).count()
+        self.processes
+            .iter()
+            .filter(|p| p.state == crate::protocol::ProcessState::Exited)
+            .count()
     }
 }

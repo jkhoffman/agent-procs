@@ -176,17 +176,41 @@ async fn main() {
     let session = cli_session_ref.unwrap_or(agent_procs::config::DEFAULT_SESSION);
 
     let exit_code = match cli.command {
-        Commands::Run { command, name } => agent_procs::cli::run::execute(session, &command, name).await,
+        Commands::Run { command, name } => {
+            agent_procs::cli::run::execute(session, &command, name).await
+        }
         Commands::Stop { target } => agent_procs::cli::stop::execute(session, &target).await,
         Commands::StopAll => agent_procs::cli::stop::execute_all(session).await,
         Commands::Restart { target } => agent_procs::cli::restart::execute(session, &target).await,
         Commands::Status { json } => agent_procs::cli::status::execute(session, json).await,
-        Commands::Logs { target, tail, follow, stderr, all, timeout, lines } => {
-            agent_procs::cli::logs::execute(session, target.as_deref(), tail, follow, stderr, all, timeout, lines).await
+        Commands::Logs {
+            target,
+            tail,
+            follow,
+            stderr,
+            all,
+            timeout,
+            lines,
+        } => {
+            agent_procs::cli::logs::execute(
+                session,
+                target.as_deref(),
+                tail,
+                follow,
+                stderr,
+                all,
+                timeout,
+                lines,
+            )
+            .await
         }
-        Commands::Wait { target, until, regex, exit, timeout } => {
-            agent_procs::cli::wait::execute(session, &target, until, regex, exit, timeout).await
-        }
+        Commands::Wait {
+            target,
+            until,
+            regex,
+            exit,
+            timeout,
+        } => agent_procs::cli::wait::execute(session, &target, until, regex, exit, timeout).await,
         Commands::Up { only, config } => {
             agent_procs::cli::up::execute(cli_session_ref, only.as_deref(), config.as_deref()).await
         }

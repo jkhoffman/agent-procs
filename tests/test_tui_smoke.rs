@@ -12,12 +12,15 @@ fn test_ui_starts_and_exits() {
     ctx.set_env();
 
     // Start a process so the daemon exists
-    let _ = Command::cargo_bin("agent-procs").unwrap()
+    let _ = Command::cargo_bin("agent-procs")
+        .unwrap()
         .args(["--session", &ctx.session, "run", "sleep 60", "--name", "bg"])
-        .output().unwrap();
+        .output()
+        .unwrap();
 
     // Launch the TUI with a very short timeout — it will be killed
-    let output = Command::cargo_bin("agent-procs").unwrap()
+    let output = Command::cargo_bin("agent-procs")
+        .unwrap()
         .args(["--session", &ctx.session, "ui"])
         .timeout(Duration::from_secs(3))
         .output();
@@ -34,11 +37,14 @@ fn test_ui_starts_and_exits() {
             let err_str = e.to_string();
             assert!(
                 err_str.contains("timed out") || err_str.contains("timeout"),
-                "unexpected error: {}", err_str
+                "unexpected error: {}",
+                err_str
             );
         }
     }
 
-    let _ = Command::cargo_bin("agent-procs").unwrap()
-        .args(["--session", &ctx.session, "stop-all"]).output();
+    let _ = Command::cargo_bin("agent-procs")
+        .unwrap()
+        .args(["--session", &ctx.session, "stop-all"])
+        .output();
 }

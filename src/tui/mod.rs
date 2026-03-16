@@ -1,14 +1,14 @@
 pub mod app;
-pub mod ui;
 pub mod input;
+pub mod ui;
 
 use crate::cli;
 use crate::protocol::{Request, Response, Stream as ProtoStream};
 use app::App;
 use crossterm::{
     event::{Event, EventStream},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::StreamExt;
 use ratatui::prelude::*;
@@ -19,7 +19,11 @@ use tokio::time::{interval, Duration};
 
 enum AppEvent {
     Key(crossterm::event::KeyEvent),
-    OutputLine { process: String, stream: ProtoStream, line: String },
+    OutputLine {
+        process: String,
+        stream: ProtoStream,
+        line: String,
+    },
     StatusUpdate(Vec<crate::protocol::ProcessInfo>),
     OutputStreamClosed,
 }
@@ -27,7 +31,10 @@ enum AppEvent {
 pub async fn run(session: &str) -> i32 {
     // Verify daemon is running
     if cli::connect(session, false).await.is_err() {
-        eprintln!("error: no daemon running for session '{}'. Start processes first.", session);
+        eprintln!(
+            "error: no daemon running for session '{}'. Start processes first.",
+            session
+        );
         return 1;
     }
 
@@ -80,12 +87,16 @@ pub async fn run(session: &str) -> i32 {
     // Handle SIGTERM gracefully (restore terminal before exit)
     let sigterm_tx = tx.clone();
     tokio::spawn(async move {
-        if let Ok(mut sig) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        if let Ok(mut sig) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
             sig.recv().await;
-            let _ = sigterm_tx.send(AppEvent::Key(crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char('q'),
-                crossterm::event::KeyModifiers::empty(),
-            ))).await;
+            let _ = sigterm_tx
+                .send(AppEvent::Key(crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Char('q'),
+                    crossterm::event::KeyModifiers::empty(),
+                )))
+                .await;
         }
     });
 
@@ -107,7 +118,14 @@ pub async fn run(session: &str) -> i32 {
                         input::Action::QuitAndStop => app.quit_and_stop(),
                         input::Action::Stop => {
                             if let Some(name) = app.selected_name() {
-                                let _ = cli::request(session, &Request::Stop { target: name.to_string() }, false).await;
+                                let _ = cli::request(
+                                    session,
+                                    &Request::Stop {
+                                        target: name.to_string(),
+                                    },
+                                    false,
+                                )
+                                .await;
                             }
                         }
                         input::Action::StopAll => {
@@ -115,13 +133,24 @@ pub async fn run(session: &str) -> i32 {
                         }
                         input::Action::Restart => {
                             if let Some(name) = app.selected_name() {
-                                let _ = cli::request(session, &Request::Restart { target: name.to_string() }, false).await;
+                                let _ = cli::request(
+                                    session,
+                                    &Request::Restart {
+                                        target: name.to_string(),
+                                    },
+                                    false,
+                                )
+                                .await;
                             }
                         }
                         input::Action::None => {}
                     }
                 }
-                AppEvent::OutputLine { process, stream, line } => {
+                AppEvent::OutputLine {
+                    process,
+                    stream,
+                    line,
+                } => {
                     app.push_output(&process, stream, &line);
                 }
                 AppEvent::StatusUpdate(processes) => {
@@ -174,8 +203,12 @@ async fn output_stream_reader(session: &str, tx: mpsc::Sender<AppEvent>) {
     };
     let mut json = serde_json::to_string(&req).unwrap();
     json.push('\n');
-    if writer.write_all(json.as_bytes()).await.is_err() { return; }
-    if writer.flush().await.is_err() { return; }
+    if writer.write_all(json.as_bytes()).await.is_err() {
+        return;
+    }
+    if writer.flush().await.is_err() {
+        return;
+    }
 
     let mut lines = BufReader::new(reader);
     loop {
@@ -185,8 +218,18 @@ async fn output_stream_reader(session: &str, tx: mpsc::Sender<AppEvent>) {
             Ok(_) => {
                 if let Ok(resp) = serde_json::from_str::<Response>(&line) {
                     match resp {
-                        Response::LogLine { process, stream, line } => {
-                            let _ = tx.send(AppEvent::OutputLine { process, stream, line }).await;
+                        Response::LogLine {
+                            process,
+                            stream,
+                            line,
+                        } => {
+                            let _ = tx
+                                .send(AppEvent::OutputLine {
+                                    process,
+                                    stream,
+                                    line,
+                                })
+                                .await;
                         }
                         Response::LogEnd => break,
                         _ => {}
@@ -204,7 +247,9 @@ async fn status_poller(session: &str, tx: mpsc::Sender<AppEvent>) {
     let mut ticker = interval(Duration::from_secs(2));
     loop {
         ticker.tick().await;
-        if let Ok(Response::Status { processes }) = cli::request(session, &Request::Status, false).await {
+        if let Ok(Response::Status { processes }) =
+            cli::request(session, &Request::Status, false).await
+        {
             if tx.send(AppEvent::StatusUpdate(processes)).await.is_err() {
                 break; // Receiver dropped, TUI is shutting down
             }

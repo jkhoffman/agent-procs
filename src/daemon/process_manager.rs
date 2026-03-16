@@ -38,19 +38,31 @@ impl ProcessManager {
         }
     }
 
-    pub async fn spawn_process(&mut self, command: &str, name: Option<String>, cwd: Option<&str>, env: Option<&HashMap<String, String>>) -> Response {
+    pub async fn spawn_process(
+        &mut self,
+        command: &str,
+        name: Option<String>,
+        cwd: Option<&str>,
+        env: Option<&HashMap<String, String>>,
+    ) -> Response {
         let id = self.id_counter.next_id();
         let name = name.unwrap_or_else(|| id.clone());
 
         if self.processes.contains_key(&name) {
-            return Response::Error { code: 1, message: format!("process already exists: {}", name) };
+            return Response::Error {
+                code: 1,
+                message: format!("process already exists: {}", name),
+            };
         }
 
         let log_dir = paths::log_dir(&self.session);
         let _ = std::fs::create_dir_all(&log_dir);
 
         let mut cmd = Command::new("sh");
-        cmd.arg("-c").arg(command).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.arg("-c")
+            .arg(command)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
@@ -66,10 +78,14 @@ impl ProcessManager {
             });
         }
 
-        let mut child = match cmd.spawn()
-        {
+        let mut child = match cmd.spawn() {
             Ok(c) => c,
-            Err(e) => return Response::Error { code: 1, message: format!("failed to spawn: {}", e) },
+            Err(e) => {
+                return Response::Error {
+                    code: 1,
+                    message: format!("failed to spawn: {}", e),
+                }
+            }
         };
 
         let pid = child.id().unwrap_or(0);
@@ -80,7 +96,15 @@ impl ProcessManager {
             let pname = name.clone();
             let path = log_dir.join(format!("{}.stdout", name));
             tokio::spawn(async move {
-                log_writer::capture_output(stdout, &path, &pname, ProtoStream::Stdout, tx, DEFAULT_MAX_LOG_BYTES).await;
+                log_writer::capture_output(
+                    stdout,
+                    &path,
+                    &pname,
+                    ProtoStream::Stdout,
+                    tx,
+                    DEFAULT_MAX_LOG_BYTES,
+                )
+                .await;
             });
         }
         if let Some(stderr) = child.stderr.take() {
@@ -88,14 +112,30 @@ impl ProcessManager {
             let pname = name.clone();
             let path = log_dir.join(format!("{}.stderr", name));
             tokio::spawn(async move {
-                log_writer::capture_output(stderr, &path, &pname, ProtoStream::Stderr, tx, DEFAULT_MAX_LOG_BYTES).await;
+                log_writer::capture_output(
+                    stderr,
+                    &path,
+                    &pname,
+                    ProtoStream::Stderr,
+                    tx,
+                    DEFAULT_MAX_LOG_BYTES,
+                )
+                .await;
             });
         }
 
-        self.processes.insert(name.clone(), ManagedProcess {
-            name: name.clone(), id: id.clone(), command: command.to_string(),
-            child: Some(child), pid, started_at: Instant::now(), exit_code: None,
-        });
+        self.processes.insert(
+            name.clone(),
+            ManagedProcess {
+                name: name.clone(),
+                id: id.clone(),
+                command: command.to_string(),
+                child: Some(child),
+                pid,
+                started_at: Instant::now(),
+                exit_code: None,
+            },
+        );
 
         Response::RunOk { name, id, pid }
     }
@@ -103,7 +143,12 @@ impl ProcessManager {
     pub async fn stop_process(&mut self, target: &str) -> Response {
         let proc = match self.find_mut(target) {
             Some(p) => p,
-            None => return Response::Error { code: 2, message: format!("process not found: {}", target) },
+            None => {
+                return Response::Error {
+                    code: 2,
+                    message: format!("process not found: {}", target),
+                }
+            }
         };
 
         if let Some(ref child) = proc.child {
@@ -117,10 +162,7 @@ impl ProcessManager {
 
         // Wait up to 10s for graceful exit, then SIGKILL
         if let Some(ref mut child) = proc.child {
-            let wait_result = tokio::time::timeout(
-                Duration::from_secs(10),
-                child.wait()
-            ).await;
+            let wait_result = tokio::time::timeout(Duration::from_secs(10), child.wait()).await;
 
             match wait_result {
                 Ok(Ok(status)) => {
@@ -140,7 +182,9 @@ impl ProcessManager {
             proc.child = None;
         }
 
-        Response::Ok { message: format!("stopped {}", target) }
+        Response::Ok {
+            message: format!("stopped {}", target),
+        }
     }
 
     pub async fn stop_all(&mut self) -> Response {
@@ -149,13 +193,20 @@ impl ProcessManager {
             self.stop_process(&name).await;
         }
         self.processes.clear();
-        Response::Ok { message: "all processes stopped".into() }
+        Response::Ok {
+            message: "all processes stopped".into(),
+        }
     }
 
     pub async fn restart_process(&mut self, target: &str) -> Response {
         let (command, name) = match self.find(target) {
             Some(p) => (p.command.clone(), p.name.clone()),
-            None => return Response::Error { code: 2, message: format!("process not found: {}", target) },
+            None => {
+                return Response::Error {
+                    code: 2,
+                    message: format!("process not found: {}", target),
+                }
+            }
         };
         self.stop_process(target).await;
         self.processes.remove(&name);
@@ -164,12 +215,24 @@ impl ProcessManager {
 
     pub fn status(&mut self) -> Response {
         self.refresh_exit_states();
-        let mut infos: Vec<ProcessInfo> = self.processes.values()
+        let mut infos: Vec<ProcessInfo> = self
+            .processes
+            .values()
             .map(|p| ProcessInfo {
-                name: p.name.clone(), id: p.id.clone(), pid: p.pid,
-                state: if p.child.is_some() { ProcessState::Running } else { ProcessState::Exited },
+                name: p.name.clone(),
+                id: p.id.clone(),
+                pid: p.pid,
+                state: if p.child.is_some() {
+                    ProcessState::Running
+                } else {
+                    ProcessState::Exited
+                },
                 exit_code: p.exit_code,
-                uptime_secs: if p.child.is_some() { Some(p.started_at.elapsed().as_secs()) } else { None },
+                uptime_secs: if p.child.is_some() {
+                    Some(p.started_at.elapsed().as_secs())
+                } else {
+                    None
+                },
                 command: p.command.clone(),
             })
             .collect();
@@ -179,7 +242,8 @@ impl ProcessManager {
 
     pub fn is_process_exited(&mut self, target: &str) -> Option<Option<i32>> {
         self.refresh_exit_states();
-        self.find(target).map(|p| if p.child.is_none() { p.exit_code } else { None })
+        self.find(target)
+            .map(|p| if p.child.is_none() { p.exit_code } else { None })
     }
 
     fn refresh_exit_states(&mut self) {
@@ -200,7 +264,8 @@ impl ProcessManager {
     }
 
     fn find(&self, target: &str) -> Option<&ManagedProcess> {
-        self.processes.get(target)
+        self.processes
+            .get(target)
             .or_else(|| self.processes.values().find(|p| p.id == target))
     }
 

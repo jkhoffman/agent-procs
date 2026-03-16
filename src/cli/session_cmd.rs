@@ -15,7 +15,9 @@ pub async fn list() -> i32 {
     println!("{:<20} STATUS", "SESSION");
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".pid") { continue; }
+        if !name.ends_with(".pid") {
+            continue;
+        }
         let session_name = name.trim_end_matches(".pid");
         let status = if session::is_daemon_alive(&entry.path()) {
             "running"
@@ -37,7 +39,9 @@ pub async fn clean() -> i32 {
 
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".pid") { continue; }
+        if !name.ends_with(".pid") {
+            continue;
+        }
         let session_name = name.trim_end_matches(".pid");
 
         if !session::is_daemon_alive(&entry.path()) {

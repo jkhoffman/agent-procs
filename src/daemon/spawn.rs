@@ -55,7 +55,10 @@ fn wait_for_daemon_ready(pid_path: &Path, socket_path: &Path) -> std::io::Result
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "daemon did not start within 5s"))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "daemon did not start within 5s",
+    ))
 }
 
 /// Entry point called when running as daemon (via --run-daemon flag in main.rs).

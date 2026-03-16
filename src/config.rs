@@ -34,7 +34,10 @@ impl ProjectConfig {
                 if !self.processes.contains_key(dep) {
                     return Err(format!("unknown dependency: {} depends on {}", name, dep));
                 }
-                dependents.entry(dep.as_str()).or_default().push(name.as_str());
+                dependents
+                    .entry(dep.as_str())
+                    .or_default()
+                    .push(name.as_str());
                 *in_degree.entry(name.as_str()).or_insert(0) += 1;
             }
         }
@@ -43,21 +46,27 @@ impl ProjectConfig {
         let mut remaining = in_degree.clone();
 
         loop {
-            let mut ready: Vec<String> = remaining.iter()
+            let mut ready: Vec<String> = remaining
+                .iter()
                 .filter(|(_, &deg)| deg == 0)
                 .map(|(&name, _)| name.to_string())
                 .collect();
 
             if ready.is_empty() {
-                if remaining.is_empty() { break; }
-                else { return Err("dependency cycle detected".into()); }
+                if remaining.is_empty() {
+                    break;
+                } else {
+                    return Err("dependency cycle detected".into());
+                }
             }
 
             for name in &ready {
                 remaining.remove(name.as_str());
                 if let Some(deps) = dependents.get(name.as_str()) {
                     for dep in deps {
-                        if let Some(deg) = remaining.get_mut(dep) { *deg -= 1; }
+                        if let Some(deg) = remaining.get_mut(dep) {
+                            *deg -= 1;
+                        }
                     }
                 }
             }
@@ -72,24 +81,33 @@ pub fn discover_config(start: &Path) -> Option<PathBuf> {
     let mut dir = start.to_path_buf();
     loop {
         let candidate = dir.join("agent-procs.yaml");
-        if candidate.exists() { return Some(candidate); }
-        if !dir.pop() { return None; }
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
     }
 }
 
 pub fn load_config(config_path: Option<&str>) -> Result<(PathBuf, ProjectConfig), String> {
     let path = match config_path {
         Some(p) => PathBuf::from(p),
-        None => discover_config(&std::env::current_dir().map_err(|e| format!("cannot get cwd: {}", e))?)
-            .ok_or_else(|| "no agent-procs.yaml found".to_string())?,
+        None => {
+            discover_config(&std::env::current_dir().map_err(|e| format!("cannot get cwd: {}", e))?)
+                .ok_or_else(|| "no agent-procs.yaml found".to_string())?
+        }
     };
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("cannot read config: {}", e))?;
-    let config: ProjectConfig = serde_yaml::from_str(&content)
-        .map_err(|e| format!("invalid config: {}", e))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("cannot read config: {}", e))?;
+    let config: ProjectConfig =
+        serde_yaml::from_str(&content).map_err(|e| format!("invalid config: {}", e))?;
     Ok((path, config))
 }
 
-pub fn resolve_session<'a>(cli_session: Option<&'a str>, config_session: Option<&'a str>) -> &'a str {
+pub fn resolve_session<'a>(
+    cli_session: Option<&'a str>,
+    config_session: Option<&'a str>,
+) -> &'a str {
     cli_session.or(config_session).unwrap_or(DEFAULT_SESSION)
 }

@@ -34,9 +34,10 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
         if max_bytes > 0 && bytes_written + line_bytes > max_bytes {
             // Rotate: close current, rename to .1, start fresh
             drop(file);
-            let rotated = log_path.with_extension(
-                format!("{}.1", log_path.extension().unwrap_or_default().to_string_lossy())
-            );
+            let rotated = log_path.with_extension(format!(
+                "{}.1",
+                log_path.extension().unwrap_or_default().to_string_lossy()
+            ));
             let _ = tokio::fs::rename(log_path, &rotated).await;
             file = match tokio::fs::File::create(log_path).await {
                 Ok(f) => f,

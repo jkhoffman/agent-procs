@@ -13,14 +13,20 @@ pub fn is_daemon_alive(pid_path: &Path) -> bool {
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
 }
 
-pub struct IdCounter { next_id: u32 }
+pub struct IdCounter {
+    next_id: u32,
+}
 
 impl Default for IdCounter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IdCounter {
-    pub fn new() -> Self { Self { next_id: 1 } }
+    pub fn new() -> Self {
+        Self { next_id: 1 }
+    }
     pub fn next_id(&mut self) -> String {
         let id = format!("p{}", self.next_id);
         self.next_id += 1;

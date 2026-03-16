@@ -1,12 +1,18 @@
 use crate::paths;
 use crate::protocol::{Request, Response};
-use std::io::{BufRead, BufReader};
 use std::fs::File;
+use std::io::{BufRead, BufReader};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn execute(
-    session: &str, target: Option<&str>, tail: usize,
-    follow: bool, stderr: bool, all: bool, timeout: Option<u64>, lines: Option<usize>,
+    session: &str,
+    target: Option<&str>,
+    tail: usize,
+    follow: bool,
+    stderr: bool,
+    all: bool,
+    timeout: Option<u64>,
+    lines: Option<usize>,
 ) -> i32 {
     if follow {
         return execute_follow(session, target, all, timeout, lines).await;
@@ -24,17 +30,29 @@ pub async fn execute(
     let path = log_dir.join(format!("{}.{}", target, stream));
 
     match tail_file(&path, tail) {
-        Ok(lines) => { for line in lines { println!("{}", line); } 0 }
+        Ok(lines) => {
+            for line in lines {
+                println!("{}", line);
+            }
+            0
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             eprintln!("error: no logs for process '{}' ({})", target, stream);
             2
         }
-        Err(e) => { eprintln!("error reading logs: {}", e); 1 }
+        Err(e) => {
+            eprintln!("error reading logs: {}", e);
+            1
+        }
     }
 }
 
 async fn execute_follow(
-    session: &str, target: Option<&str>, all: bool, timeout: Option<u64>, lines: Option<usize>,
+    session: &str,
+    target: Option<&str>,
+    all: bool,
+    timeout: Option<u64>,
+    lines: Option<usize>,
 ) -> i32 {
     let req = Request::Logs {
         target: target.map(|t| t.to_string()),
@@ -53,24 +71,37 @@ async fn execute_follow(
         } else {
             println!("{}", line);
         }
-    }).await {
+    })
+    .await
+    {
         Ok(Response::LogEnd) => 0,
-        Ok(Response::Error { code, message }) => { eprintln!("error: {}", message); code }
+        Ok(Response::Error { code, message }) => {
+            eprintln!("error: {}", message);
+            code
+        }
         Ok(_) => 0,
-        Err(e) => { eprintln!("error: {}", e); 1 }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            1
+        }
     }
 }
 
 fn show_all_logs(log_dir: &std::path::Path, tail: usize) -> i32 {
     let entries = match std::fs::read_dir(log_dir) {
         Ok(e) => e,
-        Err(e) => { eprintln!("error: cannot read log dir: {}", e); return 1; }
+        Err(e) => {
+            eprintln!("error: cannot read log dir: {}", e);
+            return 1;
+        }
     };
 
     let mut all_lines: Vec<(String, String)> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".stdout") { continue; }
+        if !name.ends_with(".stdout") {
+            continue;
+        }
         let proc_name = name.trim_end_matches(".stdout").to_string();
         if let Ok(lines) = tail_file(&entry.path(), tail) {
             for line in lines {
