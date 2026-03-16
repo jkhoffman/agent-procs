@@ -7,6 +7,7 @@ pub async fn execute(
     cli_session: Option<&str>,
     only: Option<&str>,
     config_path: Option<&str>,
+    proxy: bool,
 ) -> i32 {
     let (path, config) = match load_config(config_path) {
         Ok(c) => c,
@@ -27,6 +28,27 @@ pub async fn execute(
             return 1;
         }
     };
+
+    let enable_proxy = proxy || config.proxy.unwrap_or(false);
+
+    if enable_proxy {
+        let proxy_port = config.proxy_port;
+        let enable_req = Request::EnableProxy { proxy_port };
+        match cli::request(session, &enable_req, true).await {
+            Ok(Response::Ok { message }) => {
+                eprintln!("{}", message);
+            }
+            Ok(Response::Error { code, message }) => {
+                eprintln!("error enabling proxy: {}", message);
+                return code;
+            }
+            Err(e) => {
+                eprintln!("error enabling proxy: {}", e);
+                return 1;
+            }
+            _ => {}
+        }
+    }
 
     for group in &groups {
         let names: Vec<&String> = group
@@ -68,7 +90,7 @@ pub async fn execute(
                     name: Some((*name).clone()),
                     cwd: resolved_cwd,
                     env,
-                    port: None,
+                    port: def.port,
                 };
                 let name = (*name).clone();
                 async move {
@@ -82,8 +104,11 @@ pub async fn execute(
 
         for (name, result) in &results {
             match result {
-                Ok(Response::RunOk { name, id, pid, .. }) => {
-                    println!("started {} (id: {}, pid: {})", name, id, pid);
+                Ok(Response::RunOk { name, id, pid, url, .. }) => {
+                    match url {
+                        Some(u) => println!("started {} (id: {}, pid: {}, {})", name, id, pid, u),
+                        None => println!("started {} (id: {}, pid: {})", name, id, pid),
+                    }
                 }
                 Ok(Response::Error { code, message }) => {
                     eprintln!("error starting {}: {}", name, message);

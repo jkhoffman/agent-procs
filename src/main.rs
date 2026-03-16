@@ -143,6 +143,9 @@ enum Commands {
         /// Config file path (default: auto-discover)
         #[arg(long)]
         config: Option<String>,
+        /// Enable reverse proxy for this session
+        #[arg(long)]
+        proxy: bool,
     },
     /// Stop all config-managed processes
     #[command(display_order = 9)]
@@ -218,8 +221,8 @@ async fn main() {
             exit,
             timeout,
         } => agent_procs::cli::wait::execute(session, &target, until, regex, exit, timeout).await,
-        Commands::Up { only, config } => {
-            agent_procs::cli::up::execute(cli_session_ref, only.as_deref(), config.as_deref()).await
+        Commands::Up { only, config, proxy } => {
+            agent_procs::cli::up::execute(cli_session_ref, only.as_deref(), config.as_deref(), proxy).await
         }
         Commands::Down => agent_procs::cli::down::execute(cli_session_ref).await,
         Commands::Session { command } => match command {
