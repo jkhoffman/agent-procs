@@ -57,6 +57,26 @@ pub async fn request(session: &str, req: &Request, auto_spawn: bool) -> Result<R
     serde_json::from_str(&line).map_err(|e| format!("parse error: {}", e))
 }
 
+/// Send an EnableProxy request to the daemon. Returns Some(exit_code) on error, None on success.
+pub async fn enable_proxy(session: &str, proxy_port: Option<u16>) -> Option<i32> {
+    let req = Request::EnableProxy { proxy_port };
+    match request(session, &req, true).await {
+        Ok(Response::Ok { message }) => {
+            eprintln!("{}", message);
+            None
+        }
+        Ok(Response::Error { code, message }) => {
+            eprintln!("error enabling proxy: {}", message);
+            Some(code)
+        }
+        Err(e) => {
+            eprintln!("error enabling proxy: {}", e);
+            Some(1)
+        }
+        _ => None,
+    }
+}
+
 /// Send a request and read streaming responses until LogEnd or error.
 /// Calls `on_line` for each LogLine received. Returns the terminal response.
 pub async fn stream_responses(

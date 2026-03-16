@@ -302,8 +302,8 @@ async fn handle_request(
                 };
             }
 
-            let port = match super::proxy::find_available_proxy_port(proxy_port) {
-                Ok(p) => p,
+            let (listener, port) = match super::proxy::bind_proxy_port(proxy_port) {
+                Ok(pair) => pair,
                 Err(e) => return Response::Error { code: 1, message: e },
             };
 
@@ -314,7 +314,8 @@ async fn handle_request(
             let proxy_state = Arc::clone(state);
             let proxy_shutdown = Arc::clone(shutdown);
             tokio::spawn(async move {
-                if let Err(e) = super::proxy::start_proxy(port, proxy_state, proxy_shutdown).await
+                if let Err(e) =
+                    super::proxy::start_proxy(listener, port, proxy_state, proxy_shutdown).await
                 {
                     eprintln!("proxy error: {}", e);
                 }

@@ -8,23 +8,21 @@ use hyper::{Request, Response as HyperResponse, StatusCode};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
 type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
 
-/// Find an available port for the proxy listener.
-/// If `explicit` is given, bind-test that specific port.
-/// Otherwise scan 9090-9190 sequentially.
-pub fn find_available_proxy_port(explicit: Option<u16>) -> Result<u16, String> {
+/// Bind an available port for the proxy listener, returning the bound listener.
+/// Eliminates TOCTOU by keeping the listener alive between finding and using the port.
+pub fn bind_proxy_port(explicit: Option<u16>) -> Result<(std::net::TcpListener, u16), String> {
     const PROXY_PORT_MIN: u16 = 9090;
     const PROXY_PORT_MAX: u16 = 9190;
 
     if let Some(port) = explicit {
         match std::net::TcpListener::bind(("127.0.0.1", port)) {
-            Ok(_) => return Ok(port),
+            Ok(listener) => return Ok((listener, port)),
             Err(e) => {
                 return Err(format!(
                     "requested proxy port {} is not available: {}",
@@ -35,8 +33,8 @@ pub fn find_available_proxy_port(explicit: Option<u16>) -> Result<u16, String> {
     }
 
     for port in PROXY_PORT_MIN..=PROXY_PORT_MAX {
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return Ok(port);
+        if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", port)) {
+            return Ok((listener, port));
         }
     }
 
@@ -78,16 +76,16 @@ pub fn extract_subdomain(host: &str) -> Option<String> {
 
 type HttpClient = Client<hyper_util::client::legacy::connect::HttpConnector, Incoming>;
 
-/// Start the reverse proxy HTTP server.
+/// Start the reverse proxy HTTP server using a pre-bound listener.
 pub async fn start_proxy(
+    std_listener: std::net::TcpListener,
     proxy_port: u16,
     state: Arc<Mutex<DaemonState>>,
     shutdown: Arc<tokio::sync::Notify>,
 ) -> Result<(), String> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], proxy_port));
-    let listener = TcpListener::bind(addr)
-        .await
-        .map_err(|e| format!("failed to bind proxy on {}: {}", addr, e))?;
+    std_listener.set_nonblocking(true).map_err(|e| format!("set_nonblocking: {}", e))?;
+    let listener = TcpListener::from_std(std_listener)
+        .map_err(|e| format!("failed to convert listener: {}", e))?;
 
     // Single client instance shared across all requests (connection pool via Arc)
     let client: HttpClient = Client::builder(TokioExecutor::new()).build_http();

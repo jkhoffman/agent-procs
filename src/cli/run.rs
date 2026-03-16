@@ -7,22 +7,9 @@ pub async fn execute(
     port: Option<u16>,
     proxy: bool,
 ) -> i32 {
-    // If --proxy, send EnableProxy request first
     if proxy {
-        let enable_req = Request::EnableProxy { proxy_port: None };
-        match crate::cli::request(session, &enable_req, true).await {
-            Ok(Response::Ok { message }) => {
-                eprintln!("{}", message);
-            }
-            Ok(Response::Error { code, message }) => {
-                eprintln!("error enabling proxy: {}", message);
-                return code;
-            }
-            Err(e) => {
-                eprintln!("error enabling proxy: {}", e);
-                return 1;
-            }
-            _ => {}
+        if let Some(code) = crate::cli::enable_proxy(session, None).await {
+            return code;
         }
     }
 

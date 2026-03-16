@@ -32,21 +32,8 @@ pub async fn execute(
     let enable_proxy = proxy || config.proxy.unwrap_or(false);
 
     if enable_proxy {
-        let proxy_port = config.proxy_port;
-        let enable_req = Request::EnableProxy { proxy_port };
-        match cli::request(session, &enable_req, true).await {
-            Ok(Response::Ok { message }) => {
-                eprintln!("{}", message);
-            }
-            Ok(Response::Error { code, message }) => {
-                eprintln!("error enabling proxy: {}", message);
-                return code;
-            }
-            Err(e) => {
-                eprintln!("error enabling proxy: {}", e);
-                return 1;
-            }
-            _ => {}
+        if let Some(code) = cli::enable_proxy(session, config.proxy_port).await {
+            return code;
         }
     }
 
