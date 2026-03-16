@@ -3,5 +3,5 @@ pub mod paths;
 pub mod protocol;
 pub mod config;
 pub mod session;
-// pub mod daemon;
+pub mod daemon;
 // pub mod cli;
