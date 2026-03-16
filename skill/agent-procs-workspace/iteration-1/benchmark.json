@@ -1,0 +1,184 @@
+{
+  "metadata": {
+    "skill_name": "agent-procs",
+    "skill_path": "/Users/jkh/src/tries/2026-03-15-agent-procs/skill/agent-procs.md",
+    "executor_model": "claude-opus-4-6",
+    "analyzer_model": "claude-opus-4-6",
+    "timestamp": "2026-03-16T06:04:00Z",
+    "evals_run": [1, 2, 3],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "eval_name": "Full-Stack Config",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 7,
+        "failed": 0,
+        "total": 7,
+        "time_seconds": 30.8,
+        "tokens": 12647,
+        "tool_calls": 5,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "config_has_three_processes", "passed": true, "evidence": "Found processes: ['db', 'api', 'web']"},
+        {"text": "config_has_dependency_chain", "passed": true, "evidence": "api depends_on=['db'], web depends_on=['api']"},
+        {"text": "config_has_env_vars", "passed": true, "evidence": "api env keys=['DATABASE_URL'], web env keys=['VITE_API_URL']"},
+        {"text": "config_has_ready_patterns", "passed": true, "evidence": "ready values: ['ready to accept connections', 'Uvicorn running on', 'Local:']"},
+        {"text": "config_has_cwd", "passed": true, "evidence": "api cwd=./api, web cwd=./web"},
+        {"text": "commands_use_up", "passed": true, "evidence": "Found 'agent-procs up' in commands"},
+        {"text": "commands_verify_status", "passed": true, "evidence": "Found 'agent-procs status' in commands"}
+      ]
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "Full-Stack Config",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 7,
+        "failed": 0,
+        "total": 7,
+        "time_seconds": 36.0,
+        "tokens": 14418,
+        "tool_calls": 11,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "config_has_three_processes", "passed": true, "evidence": "Found processes: ['db', 'api', 'web']"},
+        {"text": "config_has_dependency_chain", "passed": true, "evidence": "api depends_on=['db'], web depends_on=['api']"},
+        {"text": "config_has_env_vars", "passed": true, "evidence": "api env keys=['DATABASE_URL'], web env keys=['VITE_API_URL']"},
+        {"text": "config_has_ready_patterns", "passed": true, "evidence": "ready values: ['ready to accept connections', 'Uvicorn running on', 'Local:']"},
+        {"text": "config_has_cwd", "passed": true, "evidence": "api cwd=./api, web cwd=./web"},
+        {"text": "commands_use_up", "passed": true, "evidence": "Found 'agent-procs up' in commands"},
+        {"text": "commands_verify_status", "passed": true, "evidence": "Found 'agent-procs status' in commands"}
+      ]
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "Background Server Testing",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 28.9,
+        "tokens": 12429,
+        "tool_calls": 3,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "uses_agent_procs_run", "passed": true, "evidence": "Uses agent-procs run, no nohup or &"},
+        {"text": "gives_process_a_name", "passed": true, "evidence": "--name rails"},
+        {"text": "uses_wait_with_pattern", "passed": true, "evidence": "agent-procs wait rails --until 'Listening on http://0.0.0.0:3000'"},
+        {"text": "has_timeout", "passed": true, "evidence": "timeout value: 30"},
+        {"text": "runs_tests_after_wait", "passed": true, "evidence": "bundle exec rails test:integration runs after wait"},
+        {"text": "cleans_up", "passed": true, "evidence": "agent-procs down at end"}
+      ]
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "Background Server Testing",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 29.3,
+        "tokens": 10823,
+        "tool_calls": 6,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "uses_agent_procs_run", "passed": true, "evidence": "Uses agent-procs run, no nohup or &"},
+        {"text": "gives_process_a_name", "passed": true, "evidence": "--name rails"},
+        {"text": "uses_wait_with_pattern", "passed": true, "evidence": "agent-procs wait rails --until 'Listening on http://0.0.0.0:3000'"},
+        {"text": "has_timeout", "passed": true, "evidence": "timeout value: 30"},
+        {"text": "runs_tests_after_wait", "passed": true, "evidence": "bin/rails test test/integration runs after wait"},
+        {"text": "cleans_up", "passed": true, "evidence": "agent-procs stop rails at end"}
+      ]
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "Microservices Topology",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 29.4,
+        "tokens": 12975,
+        "tool_calls": 5,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "config_has_three_services", "passed": true, "evidence": "Found processes: ['users-service', 'orders-service', 'gateway']"},
+        {"text": "gateway_depends_on_both", "passed": true, "evidence": "gateway depends_on=['users-service', 'orders-service']"},
+        {"text": "leaf_services_independent", "passed": true, "evidence": "users depends_on=[], orders depends_on=[]"},
+        {"text": "config_has_ready_patterns", "passed": true, "evidence": "All have ready: 'Server started'"},
+        {"text": "config_has_cwd", "passed": true, "evidence": "cwds: ['./services/users-service', './services/orders-service', './services/gateway']"},
+        {"text": "commands_use_up", "passed": true, "evidence": "Uses agent-procs up"}
+      ]
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "Microservices Topology",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 34.4,
+        "tokens": 11367,
+        "tool_calls": 9,
+        "errors": 0
+      },
+      "expectations": [
+        {"text": "config_has_three_services", "passed": true, "evidence": "Found processes: ['users-service', 'orders-service', 'gateway']"},
+        {"text": "gateway_depends_on_both", "passed": true, "evidence": "gateway depends_on=['users-service', 'orders-service']"},
+        {"text": "leaf_services_independent", "passed": true, "evidence": "users depends_on=[], orders depends_on=[]"},
+        {"text": "config_has_ready_patterns", "passed": true, "evidence": "All have ready: 'Server started'"},
+        {"text": "config_has_cwd", "passed": true, "evidence": "cwds: ['./services/users-service', './services/orders-service', './services/gateway']"},
+        {"text": "commands_use_up", "passed": true, "evidence": "Uses agent-procs up"}
+      ]
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0},
+      "time_seconds": {"mean": 29.7, "stddev": 1.0, "min": 28.9, "max": 30.8},
+      "tokens": {"mean": 12684, "stddev": 273, "min": 12429, "max": 12975}
+    },
+    "without_skill": {
+      "pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0},
+      "time_seconds": {"mean": 33.2, "stddev": 3.4, "min": 29.3, "max": 36.0},
+      "tokens": {"mean": 12203, "stddev": 1896, "min": 10823, "max": 14418}
+    },
+    "delta": {
+      "pass_rate": "+0.00",
+      "time_seconds": "-3.5",
+      "tokens": "+481"
+    }
+  },
+  "notes": [
+    "All assertions pass at 100% for both with-skill and without-skill configurations across all 3 evals.",
+    "The baseline performs equally well on these structured tasks — the model already has good knowledge of agent-procs CLI patterns from general training.",
+    "With-skill runs are slightly faster (~3.5s less on average) and use fewer tool calls, suggesting the skill provides more direct guidance.",
+    "The with-skill version of eval 2 (background server) produced more thorough output — status verification, log collection, and exit code propagation — which the current assertions don't measure.",
+    "Current assertions focus on correctness of structure but don't capture qualitative differences like thoroughness, best practices, or error handling. Human review of outputs is important.",
+    "The skill's primary value may be in triggering (ensuring agent-procs is used when appropriate) and in edge cases not covered by these straightforward test prompts."
+  ]
+}

@@ -7,6 +7,7 @@ pub async fn execute(
     cli_session: Option<&str>,
     only: Option<&str>,
     config_path: Option<&str>,
+    proxy: bool,
 ) -> i32 {
     let (path, config) = match load_config(config_path) {
         Ok(c) => c,
@@ -27,6 +28,14 @@ pub async fn execute(
             return 1;
         }
     };
+
+    let enable_proxy = proxy || config.proxy.unwrap_or(false);
+
+    if enable_proxy {
+        if let Some(code) = cli::enable_proxy(session, config.proxy_port).await {
+            return code;
+        }
+    }
 
     for group in &groups {
         let names: Vec<&String> = group
@@ -68,6 +77,7 @@ pub async fn execute(
                     name: Some((*name).clone()),
                     cwd: resolved_cwd,
                     env,
+                    port: def.port,
                 };
                 let name = (*name).clone();
                 async move {
@@ -81,9 +91,12 @@ pub async fn execute(
 
         for (name, result) in &results {
             match result {
-                Ok(Response::RunOk { name, id, pid, .. }) => {
-                    println!("started {} (id: {}, pid: {})", name, id, pid);
-                }
+                Ok(Response::RunOk {
+                    name, id, pid, url, ..
+                }) => match url {
+                    Some(u) => println!("started {} (id: {}, pid: {}, {})", name, id, pid, u),
+                    None => println!("started {} (id: {}, pid: {})", name, id, pid),
+                },
                 Ok(Response::Error { code, message }) => {
                     eprintln!("error starting {}: {}", name, message);
                     return *code;

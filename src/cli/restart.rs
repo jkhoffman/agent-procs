@@ -5,7 +5,7 @@ pub async fn execute(session: &str, target: &str) -> i32 {
         target: target.into(),
     };
     match crate::cli::request(session, &req, false).await {
-        Ok(Response::RunOk { name, id, pid }) => {
+        Ok(Response::RunOk { name, id, pid, .. }) => {
             println!("restarted {} (id: {}, pid: {})", name, id, pid);
             0
         }

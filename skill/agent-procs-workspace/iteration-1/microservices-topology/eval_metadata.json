@@ -1,0 +1,37 @@
+{
+  "eval_id": 3,
+  "eval_name": "microservices-topology",
+  "prompt": "I've got three microservices I need running for local dev: a gateway (port 4000), users-service (port 4001), and orders-service (port 4002). They're all in separate directories under ./services/. The gateway depends on both other services. Each one prints 'Server started' when ready. Can you set this up so I can just run one command to start everything?",
+  "assertions": [
+    {
+      "id": "config_has_three_services",
+      "description": "YAML defines gateway, users-service, and orders-service (names may vary slightly)",
+      "check": "programmatic"
+    },
+    {
+      "id": "gateway_depends_on_both",
+      "description": "Gateway's depends_on includes both other services",
+      "check": "programmatic"
+    },
+    {
+      "id": "leaf_services_independent",
+      "description": "users-service and orders-service do not depend on each other",
+      "check": "programmatic"
+    },
+    {
+      "id": "config_has_ready_patterns",
+      "description": "All services have ready: 'Server started' (or similar)",
+      "check": "programmatic"
+    },
+    {
+      "id": "config_has_cwd",
+      "description": "Each service has cwd pointing to ./services/<name>",
+      "check": "programmatic"
+    },
+    {
+      "id": "commands_use_up",
+      "description": "Uses agent-procs up to start everything with one command",
+      "check": "programmatic"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+session: microservices
+
+processes:
+  users-service:
+    cmd: npm start
+    cwd: ./services/users-service
+    env:
+      PORT: "4001"
+    ready: "Server started"
+
+  orders-service:
+    cmd: npm start
+    cwd: ./services/orders-service
+    env:
+      PORT: "4002"
+    ready: "Server started"
+
+  gateway:
+    cmd: npm start
+    cwd: ./services/gateway
+    env:
+      PORT: "4000"
+      USERS_SERVICE_URL: "http://localhost:4001"
+      ORDERS_SERVICE_URL: "http://localhost:4002"
+    ready: "Server started"
+    depends_on: [users-service, orders-service]

@@ -74,6 +74,32 @@ fn test_discover_config_walks_up() {
 }
 
 #[test]
+fn test_config_with_proxy_fields() {
+    let yaml = r#"
+proxy: true
+proxy_port: 9000
+processes:
+  web:
+    cmd: npm run dev
+    port: 3000
+"#;
+    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(config.proxy, Some(true));
+    assert_eq!(config.proxy_port, Some(9000));
+    assert_eq!(config.processes["web"].port, Some(3000));
+}
+
+#[test]
+fn test_config_proxy_fields_backward_compat() {
+    // Old configs without proxy fields should still parse
+    let yaml = "processes:\n  web:\n    cmd: npm run dev\n";
+    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(config.proxy, None);
+    assert_eq!(config.proxy_port, None);
+    assert_eq!(config.processes["web"].port, None);
+}
+
+#[test]
 fn test_discover_config_returns_none() {
     let tmp = TempDir::new().unwrap();
     assert_eq!(discover_config(tmp.path()), None);

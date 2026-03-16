@@ -8,6 +8,10 @@ pub const DEFAULT_SESSION: &str = "default";
 pub struct ProjectConfig {
     pub session: Option<String>,
     pub processes: HashMap<String, ProcessDef>,
+    #[serde(default)]
+    pub proxy: Option<bool>,
+    #[serde(default)]
+    pub proxy_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -19,6 +23,8 @@ pub struct ProcessDef {
     pub ready: Option<String>,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
 }
 
 impl ProjectConfig {

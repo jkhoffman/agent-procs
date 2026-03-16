@@ -1,0 +1,39 @@
+{
+  "eval_name": "background-server-testing",
+  "variant": "with_skill",
+  "pass_rate": 1.0,
+  "passed": 6,
+  "total": 6,
+  "expectations": [
+    {
+      "text": "uses_agent_procs_run",
+      "passed": true,
+      "evidence": "agent-procs run: True, nohup: False, trailing &: False"
+    },
+    {
+      "text": "gives_process_a_name",
+      "passed": true,
+      "evidence": "--name flag present: True"
+    },
+    {
+      "text": "uses_wait_with_pattern",
+      "passed": true,
+      "evidence": "agent-procs wait: True, --until: True"
+    },
+    {
+      "text": "has_timeout",
+      "passed": true,
+      "evidence": "timeout value: 30"
+    },
+    {
+      "text": "runs_tests_after_wait",
+      "passed": true,
+      "evidence": "wait at pos 925, test at pos 1328"
+    },
+    {
+      "text": "cleans_up",
+      "passed": true,
+      "evidence": "stop/down command present: True"
+    }
+  ]
+}

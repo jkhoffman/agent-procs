@@ -1,0 +1,82 @@
+[
+  {
+    "query": "I need to get my local dev environment running — there's a postgres database, a go API server in ./cmd/api that listens on :8080, and a next.js frontend in ./web on port 3000. The API needs DB_HOST=localhost. Can you set it up so I can start everything with one command?",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm working on a flaky integration test. I need to start the server, wait for it to print 'ready', run the tests, then tear it down. Last time I used nohup and it left zombie processes everywhere. There's gotta be a better way.",
+    "should_trigger": true
+  },
+  {
+    "query": "can you start my rails server in the background and run the e2e tests against it? the server takes like 15 seconds to boot and prints 'Puma starting' when it's ready. kill it when tests are done",
+    "should_trigger": true
+  },
+  {
+    "query": "I have an agent-procs.yaml in my project root but the gateway service keeps timing out during 'agent-procs up'. Can you look at the config and figure out what's wrong? The ready pattern might be wrong.",
+    "should_trigger": true
+  },
+  {
+    "query": "We've got 4 microservices that all need to be running for local development. Right now everyone on the team starts them manually in separate terminal tabs. I want to automate this — ideally a single config file that captures the whole topology with dependencies.",
+    "should_trigger": true
+  },
+  {
+    "query": "I need to run my webpack dev server and the mock API server side by side while I work on the frontend. The mock API is in ./mock-server and starts with 'node server.js'. Webpack is just 'npm run dev' in the root.",
+    "should_trigger": true
+  },
+  {
+    "query": "after deploying, I want to tail the logs from my background compile watcher to see if there were any typescript errors in the last build. the process is called 'tsc-watch' and I started it earlier with agent-procs",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm setting up a new project and want to write a config for agent-procs so that new devs can just clone the repo and run one command to get the full stack running. We have redis, the API, a worker process, and the frontend.",
+    "should_trigger": true
+  },
+  {
+    "query": "my dev server crashed and I need to restart it. I originally started it with agent-procs run. how do I restart it without losing the session?",
+    "should_trigger": true
+  },
+  {
+    "query": "I need to run a database migration, a seed script, and then start the dev server — but only after the migration finishes. The migration takes about 30 seconds and prints 'Migration complete' when done.",
+    "should_trigger": true
+  },
+  {
+    "query": "Can you run 'cargo build --release' and tell me if there are any warnings? I want to clean them up before the PR.",
+    "should_trigger": false
+  },
+  {
+    "query": "Help me write a docker-compose.yml for my project. I need postgres, redis, and my app container. The app should wait for both databases to be healthy before starting.",
+    "should_trigger": false
+  },
+  {
+    "query": "I need to set up a systemd service file for my Go binary so it starts on boot and restarts on failure. It should run as the 'app' user.",
+    "should_trigger": false
+  },
+  {
+    "query": "How do I spawn child processes in Python using subprocess.Popen? I need to run 3 commands in parallel and collect their output.",
+    "should_trigger": false
+  },
+  {
+    "query": "Can you help me configure PM2 to manage my Node.js application in production? I need it to run in cluster mode with 4 instances.",
+    "should_trigger": false
+  },
+  {
+    "query": "I want to set up a GitHub Actions workflow that runs my test suite on every push. The tests need a postgres service container.",
+    "should_trigger": false
+  },
+  {
+    "query": "Help me write a Kubernetes deployment for my 3 microservices with proper health checks and resource limits. They're all in the same repo under ./services/.",
+    "should_trigger": false
+  },
+  {
+    "query": "I need to add a Celery worker and beat scheduler to my Django project. Can you help me configure the celery app and write the tasks?",
+    "should_trigger": false
+  },
+  {
+    "query": "Can you set up tmux with a custom layout? I want 4 panes — one for the server, one for tests, one for logs, and one for editing.",
+    "should_trigger": false
+  },
+  {
+    "query": "run npm test and show me the output. if any tests fail, fix them.",
+    "should_trigger": false
+  }
+]

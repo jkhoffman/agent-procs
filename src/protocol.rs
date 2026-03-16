@@ -10,6 +10,8 @@ pub enum Request {
         cwd: Option<String>,
         #[serde(default)]
         env: Option<HashMap<String, String>>,
+        #[serde(default)]
+        port: Option<u16>,
     },
     Stop {
         target: String,
@@ -37,6 +39,10 @@ pub enum Request {
         timeout_secs: Option<u64>,
     },
     Shutdown,
+    EnableProxy {
+        #[serde(default)]
+        proxy_port: Option<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,6 +55,10 @@ pub enum Response {
         name: String,
         id: String,
         pid: u32,
+        #[serde(default)]
+        port: Option<u16>,
+        #[serde(default)]
+        url: Option<String>,
     },
     Status {
         processes: Vec<ProcessInfo>,
@@ -81,6 +91,10 @@ pub struct ProcessInfo {
     pub exit_code: Option<i32>,
     pub uptime_secs: Option<u64>,
     pub command: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

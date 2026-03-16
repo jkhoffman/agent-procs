@@ -1,0 +1,39 @@
+{
+  "eval_name": "microservices-topology",
+  "variant": "without_skill",
+  "pass_rate": 1.0,
+  "passed": 6,
+  "total": 6,
+  "expectations": [
+    {
+      "text": "config_has_three_services",
+      "passed": true,
+      "evidence": "Found processes: ['users-service', 'orders-service', 'gateway']"
+    },
+    {
+      "text": "gateway_depends_on_both",
+      "passed": true,
+      "evidence": "gateway depends_on=['users-service', 'orders-service']"
+    },
+    {
+      "text": "leaf_services_independent",
+      "passed": true,
+      "evidence": "users depends_on=[], orders depends_on=[]"
+    },
+    {
+      "text": "config_has_ready_patterns",
+      "passed": true,
+      "evidence": "ready values: ['Server started', 'Server started', 'Server started']"
+    },
+    {
+      "text": "config_has_cwd",
+      "passed": true,
+      "evidence": "cwds: ['./services/users-service', './services/orders-service', './services/gateway']"
+    },
+    {
+      "text": "commands_use_up",
+      "passed": true,
+      "evidence": "Found 'agent-procs up' in commands: True"
+    }
+  ]
+}

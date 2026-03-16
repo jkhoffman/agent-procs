@@ -12,11 +12,13 @@ use super::process_manager::ProcessManager;
 
 pub struct DaemonState {
     pub process_manager: ProcessManager,
+    pub proxy_port: Option<u16>,
 }
 
 pub async fn run(session: &str, socket_path: &Path) {
     let state = Arc::new(Mutex::new(DaemonState {
         process_manager: ProcessManager::new(session),
+        proxy_port: None,
     }));
 
     let listener = match UnixListener::bind(socket_path) {
@@ -91,7 +93,7 @@ pub async fn run(session: &str, socket_path: &Path) {
 
                 let is_shutdown = matches!(request, Request::Shutdown);
 
-                let response = handle_request(&state, request).await;
+                let response = handle_request(&state, &shutdown, request).await;
                 let _ = send_response(&writer, &response).await;
 
                 if is_shutdown {
@@ -160,20 +162,38 @@ async fn handle_follow_stream(
     let _ = send_response(writer, &Response::LogEnd).await;
 }
 
-async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Response {
+async fn handle_request(
+    state: &Arc<Mutex<DaemonState>>,
+    shutdown: &Arc<tokio::sync::Notify>,
+    request: Request,
+) -> Response {
     match request {
         Request::Run {
             command,
             name,
             cwd,
             env,
+            port,
         } => {
-            state
-                .lock()
-                .await
+            let mut s = state.lock().await;
+            let proxy_port = s.proxy_port;
+            let mut resp = s
                 .process_manager
-                .spawn_process(&command, name, cwd.as_deref(), env.as_ref())
-                .await
+                .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port)
+                .await;
+            drop(s);
+            if let Response::RunOk {
+                ref name,
+                ref mut url,
+                port: Some(_),
+                ..
+            } = resp
+            {
+                if let Some(pp) = proxy_port {
+                    *url = Some(format!("http://{}.localhost:{}", name, pp));
+                }
+            }
+            resp
         }
         Request::Stop { target } => {
             state
@@ -192,7 +212,21 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
                 .restart_process(&target)
                 .await
         }
-        Request::Status => state.lock().await.process_manager.status(),
+        Request::Status => {
+            let mut s = state.lock().await;
+            let proxy_port = s.proxy_port;
+            let mut resp = s.process_manager.status();
+            if let Some(pp) = proxy_port {
+                if let Response::Status { ref mut processes } = resp {
+                    for p in processes.iter_mut() {
+                        if p.port.is_some() {
+                            p.url = Some(format!("http://{}.localhost:{}", p.name, pp));
+                        }
+                    }
+                }
+            }
+            resp
+        }
         Request::Wait {
             target,
             until,
@@ -201,7 +235,7 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
             timeout_secs,
         } => {
             // Check process exists
-            {
+            let session_name = {
                 let s = state.lock().await;
                 if !s.process_manager.has_process(&target) {
                     return Response::Error {
@@ -209,9 +243,45 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
                         message: format!("process not found: {}", target),
                     };
                 }
-            }
-            // Subscribe to output and delegate to wait engine
+                s.process_manager.session_name().to_string()
+            };
+
+            // Subscribe BEFORE checking historical logs to avoid missing lines
+            // emitted between the historical scan and the subscription.
             let output_rx = state.lock().await.process_manager.output_tx.subscribe();
+
+            // Check historical log output for the pattern (fixes race where
+            // fast processes emit the pattern before Wait subscribes).
+            if let Some(ref pattern) = until {
+                let log_path =
+                    crate::paths::log_dir(&session_name).join(format!("{}.stdout", target));
+                if let Ok(content) = std::fs::read_to_string(&log_path) {
+                    let matched = if regex {
+                        regex::Regex::new(pattern)
+                            .map(|re| content.lines().any(|line| re.is_match(line)))
+                            .unwrap_or(false)
+                    } else {
+                        content.lines().any(|line| line.contains(pattern.as_str()))
+                    };
+                    if matched {
+                        // Find the matching line to return
+                        let line = content
+                            .lines()
+                            .find(|line| {
+                                if regex {
+                                    regex::Regex::new(pattern)
+                                        .map(|re| re.is_match(line))
+                                        .unwrap_or(false)
+                                } else {
+                                    line.contains(pattern.as_str())
+                                }
+                            })
+                            .unwrap_or("")
+                            .to_string();
+                        return Response::WaitMatch { line };
+                    }
+                }
+            }
             let timeout = Duration::from_secs(timeout_secs.unwrap_or(30));
             let state_clone = Arc::clone(state);
             let target_clone = target.clone();
@@ -255,6 +325,45 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
             state.lock().await.process_manager.stop_all().await;
             Response::Ok {
                 message: "daemon shutting down".into(),
+            }
+        }
+        Request::EnableProxy { proxy_port } => {
+            let mut s = state.lock().await;
+            if let Some(existing_port) = s.proxy_port {
+                return Response::Ok {
+                    message: format!(
+                        "Proxy already listening on http://localhost:{}",
+                        existing_port
+                    ),
+                };
+            }
+
+            let (listener, port) = match super::proxy::bind_proxy_port(proxy_port) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    return Response::Error {
+                        code: 1,
+                        message: e,
+                    }
+                }
+            };
+
+            s.proxy_port = Some(port);
+            s.process_manager.enable_proxy();
+            drop(s);
+
+            let proxy_state = Arc::clone(state);
+            let proxy_shutdown = Arc::clone(shutdown);
+            tokio::spawn(async move {
+                if let Err(e) =
+                    super::proxy::start_proxy(listener, port, proxy_state, proxy_shutdown).await
+                {
+                    eprintln!("proxy error: {}", e);
+                }
+            });
+
+            Response::Ok {
+                message: format!("Proxy listening on http://localhost:{}", port),
             }
         }
     }

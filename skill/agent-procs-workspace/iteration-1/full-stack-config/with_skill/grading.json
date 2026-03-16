@@ -1,0 +1,44 @@
+{
+  "eval_name": "full-stack-config",
+  "variant": "with_skill",
+  "pass_rate": 1.0,
+  "passed": 7,
+  "total": 7,
+  "expectations": [
+    {
+      "text": "config_has_three_processes",
+      "passed": true,
+      "evidence": "Found processes: ['web', 'api', 'db']"
+    },
+    {
+      "text": "config_has_dependency_chain",
+      "passed": true,
+      "evidence": "api depends_on=['db'], web depends_on=['api']"
+    },
+    {
+      "text": "config_has_env_vars",
+      "passed": true,
+      "evidence": "api env keys=['DATABASE_URL'], web env keys=['VITE_API_URL']"
+    },
+    {
+      "text": "config_has_ready_patterns",
+      "passed": true,
+      "evidence": "ready values: ['ready to accept connections', 'Uvicorn running on', 'Local:']"
+    },
+    {
+      "text": "config_has_cwd",
+      "passed": true,
+      "evidence": "api cwd=./api, web cwd=./web"
+    },
+    {
+      "text": "commands_use_up",
+      "passed": true,
+      "evidence": "Found 'agent-procs up' in commands: True"
+    },
+    {
+      "text": "commands_verify_status",
+      "passed": true,
+      "evidence": "Found 'agent-procs status' in commands: True"
+    }
+  ]
+}
