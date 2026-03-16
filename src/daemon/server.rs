@@ -48,13 +48,12 @@ pub async fn run(session: &str, socket_path: &Path) {
                 // Handle follow requests with streaming (before handle_request)
                 if let Request::Logs { follow: true, ref target, all, timeout_secs, lines, .. } = request {
                     let output_rx = state.lock().await.process_manager.output_tx.subscribe();
-                    let timeout = Duration::from_secs(timeout_secs.unwrap_or(30));
                     let max_lines = lines;
                     let target_filter = target.clone();
                     let show_all = all;
 
                     handle_follow_stream(
-                        &writer, output_rx, target_filter, show_all, timeout, max_lines
+                        &writer, output_rx, target_filter, show_all, timeout_secs, max_lines
                     ).await;
                     continue; // Don't call handle_request
                 }
@@ -78,16 +77,15 @@ async fn handle_follow_stream(
     mut output_rx: broadcast::Receiver<super::log_writer::OutputLine>,
     target: Option<String>,
     all: bool,
-    timeout: Duration,
+    timeout_secs: Option<u64>,
     max_lines: Option<usize>,
 ) {
     let mut line_count: usize = 0;
 
-    let _result = tokio::time::timeout(timeout, async {
+    let stream_loop = async {
         loop {
             match output_rx.recv().await {
                 Ok(output_line) => {
-                    // Filter by target (unless --all)
                     if !all {
                         if let Some(ref t) = target {
                             if output_line.process != *t { continue; }
@@ -100,7 +98,7 @@ async fn handle_follow_stream(
                         line: output_line.line,
                     };
                     if send_response(writer, &resp).await.is_err() {
-                        return; // Client disconnected
+                        return;
                     }
 
                     line_count += 1;
@@ -112,9 +110,14 @@ async fn handle_follow_stream(
                 Err(broadcast::error::RecvError::Closed) => return,
             }
         }
-    }).await;
+    };
 
-    // Send LogEnd (whether from timeout, line limit, or channel close)
+    // Apply timeout only if specified; otherwise stream indefinitely
+    match timeout_secs {
+        Some(secs) => { let _ = tokio::time::timeout(Duration::from_secs(secs), stream_loop).await; }
+        None => { stream_loop.await; }
+    }
+
     let _ = send_response(writer, &Response::LogEnd).await;
 }
 

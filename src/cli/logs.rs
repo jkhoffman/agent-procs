@@ -42,7 +42,7 @@ async fn execute_follow(
         follow: true,
         stderr: false,
         all: all || target.is_none(),
-        timeout_secs: timeout,
+        timeout_secs: timeout.or(Some(30)), // CLI default; TUI passes None for infinite
         lines,
     };
 
