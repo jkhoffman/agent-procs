@@ -1,4 +1,5 @@
 use crate::daemon::server::DaemonState;
+use crate::error::ProxyError;
 use crate::protocol::{ProcessState, Response};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
@@ -16,19 +17,14 @@ type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
 
 /// Bind an available port for the proxy listener, returning the bound listener.
 /// Eliminates TOCTOU by keeping the listener alive between finding and using the port.
-pub fn bind_proxy_port(explicit: Option<u16>) -> Result<(std::net::TcpListener, u16), String> {
+pub fn bind_proxy_port(explicit: Option<u16>) -> Result<(std::net::TcpListener, u16), ProxyError> {
     const PROXY_PORT_MIN: u16 = 9090;
     const PROXY_PORT_MAX: u16 = 9190;
 
     if let Some(port) = explicit {
         match std::net::TcpListener::bind(("127.0.0.1", port)) {
             Ok(listener) => return Ok((listener, port)),
-            Err(e) => {
-                return Err(format!(
-                    "requested proxy port {} is not available: {}",
-                    port, e
-                ))
-            }
+            Err(source) => return Err(ProxyError::PortUnavailable { port, source }),
         }
     }
 
@@ -38,10 +34,10 @@ pub fn bind_proxy_port(explicit: Option<u16>) -> Result<(std::net::TcpListener, 
         }
     }
 
-    Err(format!(
-        "no free proxy port available in range {}-{}",
-        PROXY_PORT_MIN, PROXY_PORT_MAX
-    ))
+    Err(ProxyError::NoFreePort {
+        min: PROXY_PORT_MIN,
+        max: PROXY_PORT_MAX,
+    })
 }
 
 /// Extract the subdomain from a Host header value.
@@ -82,12 +78,9 @@ pub async fn start_proxy(
     proxy_port: u16,
     state: Arc<Mutex<DaemonState>>,
     shutdown: Arc<tokio::sync::Notify>,
-) -> Result<(), String> {
-    std_listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("set_nonblocking: {}", e))?;
-    let listener = TcpListener::from_std(std_listener)
-        .map_err(|e| format!("failed to convert listener: {}", e))?;
+) -> std::io::Result<()> {
+    std_listener.set_nonblocking(true)?;
+    let listener = TcpListener::from_std(std_listener)?;
 
     // Single client instance shared across all requests (connection pool via Arc)
     let client: HttpClient = Client::builder(TokioExecutor::new()).build_http();
@@ -97,11 +90,11 @@ pub async fn start_proxy(
             result = listener.accept() => match result {
                 Ok(conn) => conn,
                 Err(e) => {
-                    eprintln!("proxy accept error: {}", e);
+                    tracing::warn!(error = %e, "proxy accept error");
                     continue;
                 }
             },
-            _ = shutdown.notified() => {
+            () = shutdown.notified() => {
                 return Ok(());
             }
         };
@@ -126,7 +119,7 @@ pub async fn start_proxy(
             {
                 // Connection errors are normal (client disconnects, etc.)
                 if !e.is_incomplete_message() {
-                    eprintln!("proxy connection error: {}", e);
+                    tracing::warn!(error = %e, "proxy connection error");
                 }
             }
         });
@@ -191,7 +184,9 @@ async fn handle_proxy_request(
     // Build the forwarded request
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+    let path_and_query = uri
+        .path_and_query()
+        .map_or("/", hyper::http::uri::PathAndQuery::as_str);
     let new_uri = format!("http://127.0.0.1:{}{}", backend_port, path_and_query);
 
     let mut builder = Request::builder().method(method).uri(&new_uri);
@@ -227,7 +222,7 @@ async fn handle_proxy_request(
     }
 }
 
-/// Convert a string into a BoxBody for error/status responses.
+/// Convert a string into a `BoxBody` for error/status responses.
 fn text_body(s: String) -> BoxBody {
     Full::new(Bytes::from(s))
         .map_err(|never| match never {})
@@ -249,13 +244,15 @@ fn status_page(state: &DaemonState, proxy_port: u16) -> HyperResponse<BoxBody> {
                     ProcessState::Running => "running",
                     ProcessState::Exited => "exited",
                 };
+                use std::fmt::Write;
                 if let Some(port) = p.port {
-                    body.push_str(&format!(
-                        "  http://{}.localhost:{} -> 127.0.0.1:{} [{}]\n",
+                    let _ = writeln!(
+                        body,
+                        "  http://{}.localhost:{} -> 127.0.0.1:{} [{}]",
                         p.name, proxy_port, port, state_str
-                    ));
+                    );
                 } else {
-                    body.push_str(&format!("  {} (no port) [{}]\n", p.name, state_str));
+                    let _ = writeln!(body, "  {} (no port) [{}]", p.name, state_str);
                 }
             }
         }

@@ -1,14 +1,19 @@
 use crate::daemon::wait_engine;
-use crate::protocol::{Request, Response};
+use crate::protocol::{self, Request, Response};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::broadcast;
 use tokio::sync::Mutex;
+use tokio::sync::broadcast;
 
 use super::process_manager::ProcessManager;
+
+/// Maximum concurrent client connections.  Prevents accidental fork-bomb
+/// loops where each connection spawns more connections.
+const MAX_CONCURRENT_CONNECTIONS: usize = 64;
 
 pub struct DaemonState {
     pub process_manager: ProcessManager,
@@ -24,34 +29,75 @@ pub async fn run(session: &str, socket_path: &Path) {
     let listener = match UnixListener::bind(socket_path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("fatal: failed to bind socket {:?}: {}", socket_path, e);
+            tracing::error!(path = %socket_path.display(), error = %e, "failed to bind socket");
             return;
         }
     };
 
     // Shutdown signal: set to true when a Shutdown request is handled
     let shutdown = Arc::new(tokio::sync::Notify::new());
+    let active_connections = Arc::new(AtomicUsize::new(0));
 
     loop {
         let (stream, _) = tokio::select! {
             result = listener.accept() => match result {
                 Ok(conn) => conn,
                 Err(e) => {
-                    eprintln!("warning: accept error: {}", e);
+                    tracing::warn!(error = %e, "accept error");
                     continue;
                 }
             },
-            _ = shutdown.notified() => break,
+            () = shutdown.notified() => break,
         };
+
+        // Rate limiting: atomically increment then check to avoid TOCTOU race
+        let prev = active_connections.fetch_add(1, Ordering::AcqRel);
+        if prev >= MAX_CONCURRENT_CONNECTIONS {
+            active_connections.fetch_sub(1, Ordering::AcqRel);
+            tracing::warn!(
+                current = prev,
+                max = MAX_CONCURRENT_CONNECTIONS,
+                "connection rejected: too many concurrent connections"
+            );
+            drop(stream);
+            continue;
+        }
 
         let state = Arc::clone(&state);
         let shutdown = Arc::clone(&shutdown);
+        let conn_counter = Arc::clone(&active_connections);
         tokio::spawn(async move {
+            let _guard = ConnectionGuard(conn_counter);
             let (reader, writer) = stream.into_split();
             let writer = Arc::new(Mutex::new(writer));
-            let mut lines = BufReader::new(reader).lines();
+            // Wrap reader in a size-limited adapter so read_line cannot
+            // allocate more than MAX_MESSAGE_SIZE bytes.
+            let limited = reader.take(protocol::MAX_MESSAGE_SIZE as u64);
+            let mut reader = BufReader::new(limited);
 
-            while let Ok(Some(line)) = lines.next_line().await {
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line).await {
+                    Ok(0) | Err(_) => break, // EOF or error
+                    Ok(n) if n >= protocol::MAX_MESSAGE_SIZE => {
+                        let resp = Response::Error {
+                            code: 1,
+                            message: format!(
+                                "message too large: {} bytes (max {})",
+                                n,
+                                protocol::MAX_MESSAGE_SIZE
+                            ),
+                        };
+                        let _ = send_response(&writer, &resp).await;
+                        break; // disconnect oversized clients
+                    }
+                    Ok(_) => {}
+                }
+                // Reset the take limit for the next message
+                reader
+                    .get_mut()
+                    .set_limit(protocol::MAX_MESSAGE_SIZE as u64);
+
                 let request: Request = match serde_json::from_str(&line) {
                     Ok(r) => r,
                     Err(e) => {
@@ -105,6 +151,15 @@ pub async fn run(session: &str, socket_path: &Path) {
     }
 }
 
+/// RAII guard that decrements the active connection counter when dropped.
+struct ConnectionGuard(Arc<AtomicUsize>);
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 async fn handle_follow_stream(
     writer: &Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     mut output_rx: broadcast::Receiver<super::log_writer::OutputLine>,
@@ -143,7 +198,7 @@ async fn handle_follow_stream(
                         }
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => return,
             }
         }
@@ -256,29 +311,24 @@ async fn handle_request(
                 let log_path =
                     crate::paths::log_dir(&session_name).join(format!("{}.stdout", target));
                 if let Ok(content) = std::fs::read_to_string(&log_path) {
-                    let matched = if regex {
-                        regex::Regex::new(pattern)
-                            .map(|re| content.lines().any(|line| re.is_match(line)))
-                            .unwrap_or(false)
+                    // Compile regex once for the entire scan
+                    let compiled_re = if regex {
+                        regex::Regex::new(pattern).ok()
                     } else {
-                        content.lines().any(|line| line.contains(pattern.as_str()))
+                        None
                     };
-                    if matched {
-                        // Find the matching line to return
-                        let line = content
-                            .lines()
-                            .find(|line| {
-                                if regex {
-                                    regex::Regex::new(pattern)
-                                        .map(|re| re.is_match(line))
-                                        .unwrap_or(false)
-                                } else {
-                                    line.contains(pattern.as_str())
-                                }
-                            })
-                            .unwrap_or("")
-                            .to_string();
-                        return Response::WaitMatch { line };
+                    // Single-pass: find returns the first match (no need for any + find)
+                    let matched_line = content.lines().find(|line| {
+                        if let Some(ref re) = compiled_re {
+                            re.is_match(line)
+                        } else {
+                            line.contains(pattern.as_str())
+                        }
+                    });
+                    if let Some(line) = matched_line {
+                        return Response::WaitMatch {
+                            line: line.to_string(),
+                        };
                     }
                 }
             }
@@ -298,11 +348,10 @@ async fn handle_request(
                     let state = state_clone.clone();
                     let target = target_clone.clone();
                     // Use try_lock to avoid deadlock
-                    let result = match state.try_lock() {
+                    match state.try_lock() {
                         Ok(mut s) => s.process_manager.is_process_exited(&target),
                         Err(_) => None,
-                    };
-                    result
+                    }
                 },
             )
             .await
@@ -322,7 +371,7 @@ async fn handle_request(
             }
         }
         Request::Shutdown => {
-            state.lock().await.process_manager.stop_all().await;
+            let _ = state.lock().await.process_manager.stop_all().await;
             Response::Ok {
                 message: "daemon shutting down".into(),
             }
@@ -343,8 +392,8 @@ async fn handle_request(
                 Err(e) => {
                     return Response::Error {
                         code: 1,
-                        message: e,
-                    }
+                        message: e.to_string(),
+                    };
                 }
             };
 
@@ -358,7 +407,7 @@ async fn handle_request(
                 if let Err(e) =
                     super::proxy::start_proxy(listener, port, proxy_state, proxy_shutdown).await
                 {
-                    eprintln!("proxy error: {}", e);
+                    tracing::error!(error = %e, "proxy error");
                 }
             });
 

@@ -25,10 +25,7 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
     let mut file = match tokio::fs::File::create(log_path).await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!(
-                "warning: cannot create log file {:?} for {}: {}",
-                log_path, process_name, e
-            );
+            tracing::warn!(path = %log_path.display(), process = %process_name, error = %e, "cannot create log file");
             return;
         }
     };
@@ -48,10 +45,7 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
             file = match tokio::fs::File::create(log_path).await {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!(
-                        "warning: cannot recreate log file {:?} for {} after rotation: {}",
-                        log_path, process_name, e
-                    );
+                    tracing::warn!(path = %log_path.display(), process = %process_name, error = %e, "cannot recreate log file after rotation");
                     return;
                 }
             };

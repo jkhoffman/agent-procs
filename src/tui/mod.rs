@@ -1,3 +1,12 @@
+//! Terminal UI for real-time process monitoring.
+//!
+//! The TUI connects to a running daemon session and displays a split-pane
+//! layout: a process list on the left and streaming output on the right.
+//! It polls status every 2 seconds and streams output via `Logs --follow`.
+//!
+//! See [`app`] for state management, [`input`] for keybindings, and
+//! [`ui`] for rendering.
+
 pub mod app;
 pub mod input;
 pub mod ui;
@@ -9,7 +18,7 @@ use app::App;
 use crossterm::{
     event::{Event, EventStream},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
 use ratatui::prelude::*;
@@ -18,7 +27,7 @@ use std::io::{BufRead as _, BufReader as StdBufReader};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::time::{Duration, interval};
 
 enum AppEvent {
     Key(crossterm::event::KeyEvent),
@@ -245,7 +254,7 @@ async fn output_stream_reader(session: &str, tx: mpsc::Sender<AppEvent>) {
     loop {
         let mut line = String::new();
         match lines.read_line(&mut line).await {
-            Ok(0) => break, // EOF
+            Ok(0) | Err(_) => break, // EOF or error
             Ok(_) => {
                 if let Ok(resp) = serde_json::from_str::<Response>(&line) {
                     match resp {
@@ -267,7 +276,6 @@ async fn output_stream_reader(session: &str, tx: mpsc::Sender<AppEvent>) {
                     }
                 }
             }
-            Err(_) => break,
         }
     }
 

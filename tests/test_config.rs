@@ -36,7 +36,7 @@ processes:
 
 #[test]
 fn test_topological_sort_concurrent_group() {
-    let yaml = r#"
+    let yaml = r"
 processes:
   db:
     cmd: start-db
@@ -45,7 +45,7 @@ processes:
   api:
     cmd: start-api
     depends_on: [db, cache]
-"#;
+";
     let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
     let order = config.startup_order().unwrap();
     assert_eq!(order.len(), 2);
@@ -75,14 +75,14 @@ fn test_discover_config_walks_up() {
 
 #[test]
 fn test_config_with_proxy_fields() {
-    let yaml = r#"
+    let yaml = r"
 proxy: true
 proxy_port: 9000
 processes:
   web:
     cmd: npm run dev
     port: 3000
-"#;
+";
     let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.proxy, Some(true));
     assert_eq!(config.proxy_port, Some(9000));
