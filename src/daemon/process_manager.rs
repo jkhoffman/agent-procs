@@ -14,6 +14,8 @@ pub struct ManagedProcess {
     pub name: String,
     pub id: String,
     pub command: String,
+    pub cwd: Option<String>,
+    pub env: HashMap<String, String>,
     pub child: Option<Child>,
     pub pid: u32,
     pub started_at: Instant,
@@ -130,6 +132,8 @@ impl ProcessManager {
                 name: name.clone(),
                 id: id.clone(),
                 command: command.to_string(),
+                cwd: cwd.map(|s| s.to_string()),
+                env: env.cloned().unwrap_or_default(),
                 child: Some(child),
                 pid,
                 started_at: Instant::now(),
@@ -199,8 +203,13 @@ impl ProcessManager {
     }
 
     pub async fn restart_process(&mut self, target: &str) -> Response {
-        let (command, name) = match self.find(target) {
-            Some(p) => (p.command.clone(), p.name.clone()),
+        let (command, name, cwd, env) = match self.find(target) {
+            Some(p) => (
+                p.command.clone(),
+                p.name.clone(),
+                p.cwd.clone(),
+                p.env.clone(),
+            ),
             None => {
                 return Response::Error {
                     code: 2,
@@ -210,7 +219,9 @@ impl ProcessManager {
         };
         self.stop_process(target).await;
         self.processes.remove(&name);
-        self.spawn_process(&command, Some(name), None, None).await
+        let env = if env.is_empty() { None } else { Some(env) };
+        self.spawn_process(&command, Some(name), cwd.as_deref(), env.as_ref())
+            .await
     }
 
     pub fn status(&mut self) -> Response {
