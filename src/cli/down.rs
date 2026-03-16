@@ -1,4 +1,3 @@
-pub async fn execute(_session: &str) -> i32 {
-    eprintln!("not yet implemented");
-    1
+pub async fn execute(session: &str) -> i32 {
+    crate::cli::stop::execute_all(session).await
 }
