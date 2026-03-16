@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(
@@ -163,6 +164,12 @@ enum Commands {
     /// Open terminal UI for monitoring processes
     #[command(display_order = 11)]
     Ui,
+    /// Generate shell completions
+    #[command(display_order = 12)]
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
+    },
 }
 
 #[derive(Subcommand)]
@@ -243,10 +250,19 @@ async fn main() {
         }
         Commands::Down => agent_procs::cli::down::execute(cli_session_ref).await,
         Commands::Session { command } => match command {
-            SessionCommands::List => agent_procs::cli::session_cmd::list().await,
-            SessionCommands::Clean => agent_procs::cli::session_cmd::clean().await,
+            SessionCommands::List => agent_procs::cli::session_cmd::list(),
+            SessionCommands::Clean => agent_procs::cli::session_cmd::clean(),
         },
         Commands::Ui => agent_procs::tui::run(session).await,
+        Commands::Completions { shell } => {
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "agent-procs",
+                &mut std::io::stdout(),
+            );
+            0
+        }
     };
     std::process::exit(exit_code);
 }

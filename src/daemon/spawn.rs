@@ -64,6 +64,28 @@ fn wait_for_daemon_ready(pid_path: &Path, socket_path: &Path) -> std::io::Result
 /// Entry point called when running as daemon (via --run-daemon flag in main.rs).
 /// This runs in a fresh process with no tokio runtime yet.
 pub async fn run_daemon(session: &str) {
+    // Initialize file-based tracing subscriber before any other operations.
+    // The daemon's stdout/stderr are redirected to /dev/null, so structured
+    // logging to a file is the only way to capture diagnostics.
+    {
+        use tracing_subscriber::{EnvFilter, fmt};
+
+        let log_file = paths::state_dir(session).join("daemon.log");
+        // Ensure the parent directory exists before creating the log file.
+        let _ = std::fs::create_dir_all(paths::state_dir(session));
+        if let Ok(file) = std::fs::File::create(&log_file) {
+            let subscriber = fmt()
+                .with_env_filter(
+                    EnvFilter::from_default_env()
+                        .add_directive("agent_procs=info".parse().unwrap()),
+                )
+                .with_writer(file)
+                .with_ansi(false)
+                .finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        }
+    }
+
     let socket_path = paths::socket_path(session);
     let pid_path = paths::pid_path(session);
 

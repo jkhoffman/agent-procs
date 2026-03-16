@@ -55,7 +55,7 @@ async fn execute_follow(
     lines: Option<usize>,
 ) -> i32 {
     let req = Request::Logs {
-        target: target.map(|t| t.to_string()),
+        target: target.map(std::string::ToString::to_string),
         tail: 0,
         follow: true,
         stderr: false,
@@ -74,7 +74,6 @@ async fn execute_follow(
     })
     .await
     {
-        Ok(Response::LogEnd) => 0,
         Ok(Response::Error { code, message }) => {
             eprintln!("error: {}", message);
             code
@@ -105,7 +104,7 @@ fn show_all_logs(log_dir: &std::path::Path, tail: usize) -> i32 {
         let proc_name = name.trim_end_matches(".stdout").to_string();
         if let Ok(lines) = tail_file(&entry.path(), tail) {
             for line in lines {
-                all_lines.push((proc_name.to_string(), line));
+                all_lines.push((proc_name.clone(), line));
             }
         }
     }

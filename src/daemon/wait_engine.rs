@@ -23,7 +23,7 @@ pub async fn wait_for(
                     return Response::Error {
                         code: 1,
                         message: format!("invalid regex: {}", e),
-                    }
+                    };
                 }
             },
             None => None,
@@ -62,7 +62,7 @@ pub async fn wait_for(
                             }
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {},
                     Err(broadcast::error::RecvError::Closed) => {
                         if wait_exit {
                             // Channel closed — process likely exited
@@ -75,6 +75,6 @@ pub async fn wait_for(
                 }
             }
         } => result,
-        _ = tokio::time::sleep(timeout) => Response::WaitTimeout,
+        () = tokio::time::sleep(timeout) => Response::WaitTimeout,
     }
 }

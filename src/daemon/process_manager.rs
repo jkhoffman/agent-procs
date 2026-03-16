@@ -1,4 +1,5 @@
 use crate::daemon::log_writer::{self, OutputLine};
+use crate::error::ProxyError;
 use crate::paths;
 use crate::protocol::{ProcessInfo, ProcessState, Response, Stream as ProtoStream};
 use crate::session::IdCounter;
@@ -14,6 +15,7 @@ const AUTO_PORT_MAX: u16 = 4999;
 
 /// Returns true if `name` is a valid DNS label: 1-63 lowercase alphanumeric/hyphen
 /// chars, not starting or ending with a hyphen.
+#[must_use]
 pub fn is_valid_dns_label(name: &str) -> bool {
     if name.is_empty() || name.len() > 63 {
         return false;
@@ -60,7 +62,7 @@ impl ProcessManager {
         }
     }
 
-    fn auto_assign_port(&mut self) -> Result<u16, String> {
+    fn auto_assign_port(&mut self) -> Result<u16, ProxyError> {
         let start = self.next_auto_port;
         let assigned: std::collections::HashSet<u16> =
             self.processes.values().filter_map(|p| p.port).collect();
@@ -82,12 +84,14 @@ impl ProcessManager {
                 return Ok(candidate);
             }
         }
-        Err(format!(
-            "no free port available in range {}-{} (started at {})",
-            AUTO_PORT_MIN, AUTO_PORT_MAX, start
-        ))
+        Err(ProxyError::NoFreeAutoPort {
+            min: AUTO_PORT_MIN,
+            max: AUTO_PORT_MAX,
+            start,
+        })
     }
 
+    #[allow(unsafe_code, clippy::unused_async)]
     pub async fn spawn_process(
         &mut self,
         command: &str,
@@ -127,8 +131,8 @@ impl ProcessManager {
                 Err(e) => {
                     return Response::Error {
                         code: 1,
-                        message: e,
-                    }
+                        message: e.to_string(),
+                    };
                 }
             }
         } else {
@@ -167,7 +171,9 @@ impl ProcessManager {
         } else if let Some(env_vars) = env {
             cmd.envs(env_vars);
         }
-        // Put child in its own process group so we can signal the entire tree
+        // SAFETY: `setpgid(0, 0)` creates a new process group with the child as
+        // leader.  This must happen before exec so that all grandchildren inherit
+        // the group.  The parent uses this PGID to signal the entire tree on stop.
         unsafe {
             cmd.pre_exec(|| {
                 nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
@@ -182,7 +188,7 @@ impl ProcessManager {
                 return Response::Error {
                     code: 1,
                     message: format!("failed to spawn: {}", e),
-                }
+                };
             }
         };
 
@@ -228,7 +234,7 @@ impl ProcessManager {
                 name: name.clone(),
                 id: id.clone(),
                 command: command.to_string(),
-                cwd: cwd.map(|s| s.to_string()),
+                cwd: cwd.map(std::string::ToString::to_string),
                 env: env.cloned().unwrap_or_default(),
                 child: Some(child),
                 pid,
@@ -255,7 +261,7 @@ impl ProcessManager {
                 return Response::Error {
                     code: 2,
                     message: format!("process not found: {}", target),
-                }
+                };
             }
         };
 
@@ -298,7 +304,7 @@ impl ProcessManager {
     pub async fn stop_all(&mut self) -> Response {
         let names: Vec<String> = self.processes.keys().cloned().collect();
         for name in names {
-            self.stop_process(&name).await;
+            let _ = self.stop_process(&name).await;
         }
         self.processes.clear();
         Response::Ok {
@@ -319,10 +325,10 @@ impl ProcessManager {
                 return Response::Error {
                     code: 2,
                     message: format!("process not found: {}", target),
-                }
+                };
             }
         };
-        self.stop_process(target).await;
+        let _ = self.stop_process(target).await;
         self.processes.remove(&name);
         let env = if env.is_empty() { None } else { Some(env) };
         self.spawn_process(&command, Some(name), cwd.as_deref(), env.as_ref(), port)
@@ -341,7 +347,7 @@ impl ProcessManager {
     }
 
     /// Returns `None` if process not found or still running.
-    /// Returns `Some(exit_code)` if process has exited (exit_code is None for signal kills).
+    /// Returns `Some(exit_code)` if process has exited (`exit_code` is None for signal kills).
     pub fn is_process_exited(&mut self, target: &str) -> Option<Option<i32>> {
         self.refresh_exit_states();
         self.find(target).and_then(|p| {
@@ -428,5 +434,31 @@ impl ProcessManager {
         } else {
             self.processes.values_mut().find(|p| p.id == target)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_dns_labels() {
+        assert!(is_valid_dns_label("api"));
+        assert!(is_valid_dns_label("my-app"));
+        assert!(is_valid_dns_label("a"));
+        assert!(is_valid_dns_label("a1"));
+        assert!(is_valid_dns_label("123"));
+    }
+
+    #[test]
+    fn test_invalid_dns_labels() {
+        assert!(!is_valid_dns_label(""));
+        assert!(!is_valid_dns_label("-start"));
+        assert!(!is_valid_dns_label("end-"));
+        assert!(!is_valid_dns_label("UPPER"));
+        assert!(!is_valid_dns_label("has.dot"));
+        assert!(!is_valid_dns_label("has space"));
+        assert!(!is_valid_dns_label(&"a".repeat(64))); // > 63 chars
+        assert!(!is_valid_dns_label("has_underscore"));
     }
 }

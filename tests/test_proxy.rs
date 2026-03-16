@@ -5,7 +5,7 @@ use std::io::Write;
 use std::time::Duration;
 
 /// Test: running with --port and --proxy shows a URL in stdout.
-/// The URL is the proxy URL form: http://{name}.localhost:{proxy_port}
+/// The URL is the proxy URL form: `http://{name}.localhost:{proxy_port`}
 #[test]
 fn test_run_with_port_shows_url() {
     let ctx = TestContext::new("t-port");
@@ -154,7 +154,7 @@ fn test_proxy_routes_request() {
         let prefix = "http://localhost:";
         stderr.find(prefix).and_then(|idx| {
             let after = &stderr[idx + prefix.len()..];
-            let port_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let port_str: String = after.chars().take_while(char::is_ascii_digit).collect();
             port_str.parse::<u16>().ok()
         })
     };

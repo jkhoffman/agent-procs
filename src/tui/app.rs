@@ -173,3 +173,113 @@ impl App {
             .count()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ProcessInfo, ProcessState, Stream};
+
+    fn make_process(name: &str, state: ProcessState) -> ProcessInfo {
+        let exit_code = if state == ProcessState::Exited {
+            Some(0)
+        } else {
+            None
+        };
+        let uptime_secs = if state == ProcessState::Running {
+            Some(10)
+        } else {
+            None
+        };
+        ProcessInfo {
+            name: name.into(),
+            id: format!("p-{}", name),
+            pid: 100,
+            state,
+            exit_code,
+            uptime_secs,
+            command: "true".into(),
+            port: None,
+            url: None,
+        }
+    }
+
+    #[test]
+    fn test_select_next_wraps() {
+        let mut app = App::new();
+        app.update_processes(vec![
+            make_process("a", ProcessState::Running),
+            make_process("b", ProcessState::Running),
+            make_process("c", ProcessState::Running),
+        ]);
+        app.selected = 2; // last item
+        app.select_next();
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn test_select_prev_wraps() {
+        let mut app = App::new();
+        app.update_processes(vec![
+            make_process("a", ProcessState::Running),
+            make_process("b", ProcessState::Running),
+            make_process("c", ProcessState::Running),
+        ]);
+        app.selected = 0;
+        app.select_prev();
+        assert_eq!(app.selected, 2);
+    }
+
+    #[test]
+    fn test_cycle_stream_mode() {
+        let mut app = App::new();
+        assert_eq!(app.stream_mode, StreamMode::Stdout);
+        app.cycle_stream_mode();
+        assert_eq!(app.stream_mode, StreamMode::Stderr);
+        app.cycle_stream_mode();
+        assert_eq!(app.stream_mode, StreamMode::Both);
+        app.cycle_stream_mode();
+        assert_eq!(app.stream_mode, StreamMode::Stdout);
+    }
+
+    #[test]
+    fn test_toggle_pause() {
+        let mut app = App::new();
+        assert!(!app.paused);
+        app.toggle_pause();
+        assert!(app.paused);
+        app.toggle_pause();
+        assert!(!app.paused);
+    }
+
+    #[test]
+    fn test_push_output() {
+        let mut app = App::new();
+        app.push_output("web", Stream::Stdout, "hello world");
+        let buf = app.buffers.get("web").unwrap();
+        let lines = buf.stdout_lines();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], "hello world");
+    }
+
+    #[test]
+    fn test_running_count() {
+        let mut app = App::new();
+        app.update_processes(vec![
+            make_process("a", ProcessState::Running),
+            make_process("b", ProcessState::Exited),
+            make_process("c", ProcessState::Running),
+        ]);
+        assert_eq!(app.running_count(), 2);
+    }
+
+    #[test]
+    fn test_exited_count() {
+        let mut app = App::new();
+        app.update_processes(vec![
+            make_process("a", ProcessState::Running),
+            make_process("b", ProcessState::Exited),
+            make_process("c", ProcessState::Exited),
+        ]);
+        assert_eq!(app.exited_count(), 2);
+    }
+}

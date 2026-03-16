@@ -16,7 +16,8 @@ impl TestContext {
     }
 
     pub fn set_env(&self) {
-        std::env::set_var("XDG_STATE_HOME", self.state_dir.path());
+        // SAFETY: Test code runs single-threaded per test; no concurrent env reads.
+        unsafe { std::env::set_var("XDG_STATE_HOME", self.state_dir.path()) };
     }
 }
 

@@ -80,14 +80,14 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
             StreamMode::Stdout => buf
                 .stdout_lines()
                 .iter()
-                .map(|l| Line::from(l.to_string()))
+                .map(|l| Line::from((*l).to_string()))
                 .collect(),
             StreamMode::Stderr => buf
                 .stderr_lines()
                 .iter()
                 .map(|l| {
                     Line::from(Span::styled(
-                        l.to_string(),
+                        (*l).to_string(),
                         Style::default().fg(Color::Yellow),
                     ))
                 })
@@ -96,9 +96,9 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
                 .all_lines()
                 .iter()
                 .map(|(src, l)| match src {
-                    LineSource::Stdout => Line::from(l.to_string()),
+                    LineSource::Stdout => Line::from((*l).to_string()),
                     LineSource::Stderr => Line::from(Span::styled(
-                        l.to_string(),
+                        (*l).to_string(),
                         Style::default().fg(Color::Yellow),
                     )),
                 })

@@ -30,8 +30,8 @@ pub async fn execute(session: &str, json: bool) -> i32 {
                         ProcessState::Running => "running",
                         ProcessState::Exited => "exited",
                     };
-                    let exit = p.exit_code.map(|c| c.to_string()).unwrap_or("-".into());
-                    let uptime = p.uptime_secs.map(format_uptime).unwrap_or("-".into());
+                    let exit = p.exit_code.map_or("-".into(), |c| c.to_string());
+                    let uptime = p.uptime_secs.map_or("-".into(), format_uptime);
                     if has_urls {
                         let url = p.url.as_deref().unwrap_or("-");
                         println!(

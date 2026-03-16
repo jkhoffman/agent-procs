@@ -34,15 +34,17 @@ fn test_pid_path() {
 #[test]
 fn test_state_dir_uses_xdg_when_set() {
     let tmp = TempDir::new().unwrap();
-    env::set_var("XDG_STATE_HOME", tmp.path());
+    // SAFETY: Test-only; no concurrent env access in this test.
+    unsafe { env::set_var("XDG_STATE_HOME", tmp.path()) };
     let result = agent_procs::paths::state_dir("test-session");
     assert_eq!(result, tmp.path().join("agent-procs/sessions/test-session"));
-    env::remove_var("XDG_STATE_HOME");
+    unsafe { env::remove_var("XDG_STATE_HOME") };
 }
 
 #[test]
 fn test_state_dir_defaults_to_home() {
-    env::remove_var("XDG_STATE_HOME");
+    // SAFETY: Test-only; no concurrent env access in this test.
+    unsafe { env::remove_var("XDG_STATE_HOME") };
     let result = agent_procs::paths::state_dir("test-session");
     let home = env::var("HOME").unwrap();
     let expected = std::path::PathBuf::from(format!(
@@ -55,13 +57,14 @@ fn test_state_dir_defaults_to_home() {
 #[test]
 fn test_log_dir() {
     let tmp = TempDir::new().unwrap();
-    env::set_var("XDG_STATE_HOME", tmp.path());
+    // SAFETY: Test-only; no concurrent env access in this test.
+    unsafe { env::set_var("XDG_STATE_HOME", tmp.path()) };
     let result = agent_procs::paths::log_dir("mysession");
     assert_eq!(
         result,
         tmp.path().join("agent-procs/sessions/mysession/logs")
     );
-    env::remove_var("XDG_STATE_HOME");
+    unsafe { env::remove_var("XDG_STATE_HOME") };
 }
 
 #[test]
