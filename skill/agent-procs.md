@@ -41,6 +41,11 @@ agent-procs status
 agent-procs logs webserver --tail 50      # last 50 lines
 agent-procs logs webserver --stderr       # stderr only
 agent-procs logs --all --tail 30          # all processes interleaved
+
+# Real-time streaming
+agent-procs logs webserver --follow --timeout 30    # stream for 30s
+agent-procs logs webserver --follow --lines 20      # stream until 20 lines
+agent-procs logs --all --follow --timeout 30        # all processes live
 ```
 
 ## Waiting
