@@ -1,16 +1,17 @@
 use crate::paths;
+use crate::protocol::{Request, Response};
 use std::io::{BufRead, BufReader};
 use std::fs::File;
 
 pub async fn execute(
     session: &str, target: Option<&str>, tail: usize,
-    follow: bool, stderr: bool, all: bool, _timeout: Option<u64>, _lines: Option<usize>,
+    follow: bool, stderr: bool, all: bool, timeout: Option<u64>, lines: Option<usize>,
 ) -> i32 {
-    // Note: --follow is deferred. The flag is accepted but ignored with a warning.
     if follow {
-        eprintln!("warning: --follow is not yet implemented, showing --tail output instead");
+        return execute_follow(session, target, all, timeout, lines).await;
     }
 
+    // Non-follow: read from disk (unchanged)
     let log_dir = paths::log_dir(session);
 
     if all || target.is_none() {
@@ -28,6 +29,34 @@ pub async fn execute(
             2
         }
         Err(e) => { eprintln!("error reading logs: {}", e); 1 }
+    }
+}
+
+async fn execute_follow(
+    session: &str, target: Option<&str>, all: bool, timeout: Option<u64>, lines: Option<usize>,
+) -> i32 {
+    let req = Request::Logs {
+        target: target.map(|t| t.to_string()),
+        tail: 0,
+        follow: true,
+        stderr: false,
+        all: all || target.is_none(),
+        timeout_secs: timeout,
+        lines,
+    };
+
+    let show_prefix = all || target.is_none();
+    match crate::cli::stream_responses(session, &req, false, |process, _stream, line| {
+        if show_prefix {
+            println!("[{}] {}", process, line);
+        } else {
+            println!("{}", line);
+        }
+    }).await {
+        Ok(Response::LogEnd) => 0,
+        Ok(Response::Error { code, message }) => { eprintln!("error: {}", message); code }
+        Ok(_) => 0,
+        Err(e) => { eprintln!("error: {}", e); 1 }
     }
 }
 
