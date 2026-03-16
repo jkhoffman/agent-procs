@@ -1,9 +1,48 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "agent-procs", about = "Concurrent process runner for AI agents")]
+#[command(
+    name = "agent-procs",
+    about = "Concurrent process runner for AI agents",
+    long_about = "\
+Concurrent process runner for AI agents.
+
+Processes run in a background daemon and persist across CLI invocations.
+Use --session to isolate process groups (e.g. per-project).",
+    before_long_help = "\
+Typical workflow:
+  agent-procs run \"npm run dev\" --name server
+  agent-procs wait server --until \"Listening on\" --timeout 30
+  agent-procs logs server --tail 50
+  agent-procs stop server
+
+Config-driven (agent-procs.yaml):
+  agent-procs up                              # start all from config
+  agent-procs down                            # stop all config processes",
+    after_long_help = "\
+Exit codes:
+  0  Success
+  1  Error (timeout, connection failure, unexpected response)
+  2  No logs found for target process
+
+Config file format (agent-procs.yaml):
+  processes:
+    db:
+      cmd: docker compose up postgres
+      ready: \"ready to accept connections\"
+    api:
+      cmd: ./start-api-server
+      cwd: ./backend
+      env:
+        DATABASE_URL: postgres://localhost:5432/mydb
+      ready: \"Listening on :8080\"
+      depends_on: [db]
+
+  Fields: cmd (required), cwd, env, ready (stdout pattern), depends_on
+  Processes start in dependency order; independent ones run concurrently."
+)]
 struct Cli {
-    /// Session name (default: "default")
+    /// Session name for isolating process groups (e.g. per-project)
     #[arg(long, global = true, default_value = "default")]
     session: String,
 
@@ -14,6 +53,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Spawn a new process
+    #[command(display_order = 1)]
     Run {
         /// Command to execute
         command: String,
@@ -22,66 +62,98 @@ enum Commands {
         name: Option<String>,
     },
     /// Stop a process
-    Stop { target: String },
+    #[command(display_order = 2)]
+    Stop {
+        /// Process name or ID
+        target: String,
+    },
     /// Stop all processes
+    #[command(display_order = 3)]
     StopAll,
     /// Restart a process
-    Restart { target: String },
+    #[command(display_order = 4)]
+    Restart {
+        /// Process name or ID
+        target: String,
+    },
     /// Show status of all processes
+    #[command(display_order = 5)]
     Status {
+        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
     /// View process logs
+    #[command(display_order = 6)]
     Logs {
+        /// Process name or ID (omit with --all)
         target: Option<String>,
+        /// Number of lines from end
         #[arg(long, default_value = "100")]
         tail: usize,
+        /// Stream output in real-time
         #[arg(long)]
         follow: bool,
+        /// Show stderr instead of stdout
         #[arg(long)]
         stderr: bool,
+        /// Show all processes interleaved
         #[arg(long)]
         all: bool,
+        /// Timeout in seconds (default: 30 for --follow)
         #[arg(long)]
         timeout: Option<u64>,
-        /// Max lines for --follow
+        /// Max lines to stream (for --follow)
         #[arg(long)]
         lines: Option<usize>,
     },
     /// Wait for a process condition
+    #[command(display_order = 7)]
     Wait {
+        /// Process name or ID
         target: String,
+        /// Wait until pattern appears in output
         #[arg(long)]
         until: Option<String>,
+        /// Interpret --until pattern as regex
         #[arg(long)]
         regex: bool,
+        /// Wait until process exits
         #[arg(long)]
         exit: bool,
+        /// Timeout in seconds
         #[arg(long)]
         timeout: Option<u64>,
     },
     /// Start all processes from config
+    #[command(display_order = 8)]
     Up {
+        /// Start only these processes (comma-separated)
         #[arg(long)]
         only: Option<String>,
+        /// Config file path (default: auto-discover)
         #[arg(long)]
         config: Option<String>,
     },
     /// Stop all config-managed processes
+    #[command(display_order = 9)]
     Down,
     /// Session management
+    #[command(display_order = 10)]
     Session {
         #[command(subcommand)]
         command: SessionCommands,
     },
     /// Open terminal UI for monitoring processes
+    #[command(display_order = 11)]
     Ui,
 }
 
 #[derive(Subcommand)]
 enum SessionCommands {
+    /// List active sessions
     List,
+    /// Remove stale sessions
     Clean,
 }
 
