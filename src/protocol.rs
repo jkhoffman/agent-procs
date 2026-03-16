@@ -1,9 +1,16 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Request {
-    Run { command: String, name: Option<String>, cwd: Option<String> },
+    Run {
+        command: String,
+        name: Option<String>,
+        cwd: Option<String>,
+        #[serde(default)]
+        env: Option<HashMap<String, String>>,
+    },
     Stop { target: String },
     StopAll,
     Restart { target: String },

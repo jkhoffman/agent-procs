@@ -2,7 +2,14 @@ use agent_procs::protocol::*;
 
 #[test]
 fn test_run_request_roundtrip() {
-    let req = Request::Run { command: "npm run dev".into(), name: Some("webserver".into()), cwd: None };
+    let req = Request::Run {
+        command: "npm run dev".into(),
+        name: Some("webserver".into()),
+        cwd: None,
+        env: Some(std::collections::HashMap::from([
+            ("NODE_ENV".to_string(), "production".to_string()),
+        ])),
+    };
     let json = serde_json::to_string(&req).unwrap();
     let decoded: Request = serde_json::from_str(&json).unwrap();
     assert_eq!(req, decoded);

@@ -38,7 +38,7 @@ impl ProcessManager {
         }
     }
 
-    pub async fn spawn_process(&mut self, command: &str, name: Option<String>, cwd: Option<&str>) -> Response {
+    pub async fn spawn_process(&mut self, command: &str, name: Option<String>, cwd: Option<&str>, env: Option<&HashMap<String, String>>) -> Response {
         let id = self.id_counter.next_id();
         let name = name.unwrap_or_else(|| id.clone());
 
@@ -53,6 +53,9 @@ impl ProcessManager {
         cmd.arg("-c").arg(command).stdout(Stdio::piped()).stderr(Stdio::piped());
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
+        }
+        if let Some(env_vars) = env {
+            cmd.envs(env_vars);
         }
         // Put child in its own process group so we can signal the entire tree
         unsafe {
@@ -155,7 +158,7 @@ impl ProcessManager {
         };
         self.stop_process(target).await;
         self.processes.remove(&name);
-        self.spawn_process(&command, Some(name), None).await
+        self.spawn_process(&command, Some(name), None, None).await
     }
 
     pub fn status(&mut self) -> Response {

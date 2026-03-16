@@ -60,8 +60,8 @@ pub async fn run(session: &str, socket_path: &Path) {
 
 async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Response {
     match request {
-        Request::Run { command, name, cwd } => {
-            state.lock().await.process_manager.spawn_process(&command, name, cwd.as_deref()).await
+        Request::Run { command, name, cwd, env } => {
+            state.lock().await.process_manager.spawn_process(&command, name, cwd.as_deref(), env.as_ref()).await
         }
         Request::Stop { target } => {
             state.lock().await.process_manager.stop_process(&target).await

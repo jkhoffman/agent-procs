@@ -35,13 +35,6 @@ pub async fn execute(session: &str, only: Option<&str>, config_path: Option<&str
             }
 
             let def = &config.processes[name];
-            let mut cmd = def.cmd.clone();
-            if !def.env.is_empty() {
-                let exports: Vec<String> = def.env.iter()
-                    .map(|(k, v)| format!("export {}={}", k, shell_escape(v)))
-                    .collect();
-                cmd = format!("{} && {}", exports.join(" && "), cmd);
-            }
 
             // Resolve cwd relative to config file directory
             let resolved_cwd = def.cwd.as_ref().map(|c| {
@@ -53,8 +46,16 @@ pub async fn execute(session: &str, only: Option<&str>, config_path: Option<&str
                 }
             });
 
+            // Pass env vars through the protocol (no shell escaping needed)
+            let env = if def.env.is_empty() { None } else { Some(def.env.clone()) };
+
             // Start the process
-            let req = Request::Run { command: cmd, name: Some(name.clone()), cwd: resolved_cwd };
+            let req = Request::Run {
+                command: def.cmd.clone(),
+                name: Some(name.clone()),
+                cwd: resolved_cwd,
+                env,
+            };
             match cli::request(session, &req, true).await {
                 Ok(Response::RunOk { name, id, pid }) => {
                     println!("started {} (id: {}, pid: {})", name, id, pid);
@@ -89,12 +90,4 @@ pub async fn execute(session: &str, only: Option<&str>, config_path: Option<&str
 
     println!("all processes started");
     0
-}
-
-fn shell_escape(s: &str) -> String {
-    if s.contains(' ') || s.contains('\'') || s.contains('"') {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    } else {
-        s.to_string()
-    }
 }
