@@ -62,6 +62,28 @@ fn test_error_response() {
 }
 
 #[test]
+fn test_enable_proxy_with_port() {
+    let req = Request::EnableProxy {
+        proxy_port: Some(8080),
+    };
+    let json = serde_json::to_string(&req).unwrap();
+    let decoded: Request = serde_json::from_str(&json).unwrap();
+    assert_eq!(req, decoded);
+}
+
+#[test]
+fn test_enable_proxy_without_port() {
+    let req = Request::EnableProxy { proxy_port: None };
+    let json = serde_json::to_string(&req).unwrap();
+    let decoded: Request = serde_json::from_str(&json).unwrap();
+    assert_eq!(req, decoded);
+    // Ensure absent field deserializes correctly from minimal JSON
+    let minimal = r#"{"type":"EnableProxy"}"#;
+    let decoded2: Request = serde_json::from_str(minimal).unwrap();
+    assert_eq!(decoded2, req);
+}
+
+#[test]
 fn test_run_ok_with_port_and_url() {
     let resp = Response::RunOk {
         name: "web".into(),

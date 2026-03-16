@@ -37,6 +37,10 @@ pub enum Request {
         timeout_secs: Option<u64>,
     },
     Shutdown,
+    EnableProxy {
+        #[serde(default)]
+        proxy_port: Option<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

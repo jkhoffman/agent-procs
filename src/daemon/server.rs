@@ -257,6 +257,10 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
                 message: "daemon shutting down".into(),
             }
         }
+        Request::EnableProxy { proxy_port: _ } => Response::Error {
+            code: 1,
+            message: "proxy not yet implemented".into(),
+        },
     }
 }
 
