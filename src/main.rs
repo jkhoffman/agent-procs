@@ -26,6 +26,7 @@ Exit codes:
   2  No logs found for target process
 
 Config file format (agent-procs.yaml):
+  session: myproject                          # optional, used by up/down
   processes:
     db:
       cmd: docker compose up postgres
@@ -38,13 +39,14 @@ Config file format (agent-procs.yaml):
       ready: \"Listening on :8080\"
       depends_on: [db]
 
-  Fields: cmd (required), cwd, env, ready (stdout pattern), depends_on
+  Top-level: session (optional, overridden by --session)
+  Process fields: cmd (required), cwd, env, ready (stdout pattern), depends_on
   Processes start in dependency order; independent ones run concurrently."
 )]
 struct Cli {
     /// Session name for isolating process groups (e.g. per-project)
-    #[arg(long, global = true, default_value = "default")]
-    session: String,
+    #[arg(long, global = true)]
+    session: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -169,7 +171,9 @@ async fn main() {
     }
 
     let cli = Cli::parse();
-    let session = &cli.session;
+    let cli_session = cli.session;
+    let cli_session_ref = cli_session.as_deref();
+    let session = cli_session_ref.unwrap_or(agent_procs::config::DEFAULT_SESSION);
 
     let exit_code = match cli.command {
         Commands::Run { command, name } => agent_procs::cli::run::execute(session, &command, name).await,
@@ -184,9 +188,9 @@ async fn main() {
             agent_procs::cli::wait::execute(session, &target, until, regex, exit, timeout).await
         }
         Commands::Up { only, config } => {
-            agent_procs::cli::up::execute(session, only.as_deref(), config.as_deref()).await
+            agent_procs::cli::up::execute(cli_session_ref, only.as_deref(), config.as_deref()).await
         }
-        Commands::Down => agent_procs::cli::down::execute(session).await,
+        Commands::Down => agent_procs::cli::down::execute(cli_session_ref).await,
         Commands::Session { command } => match command {
             SessionCommands::List => agent_procs::cli::session_cmd::list().await,
             SessionCommands::Clean => agent_procs::cli::session_cmd::clean().await,

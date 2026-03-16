@@ -1,25 +1,14 @@
 use crate::cli;
-use crate::config::{discover_config, ProjectConfig};
+use crate::config::{load_config, resolve_session};
 use crate::protocol::{Request, Response};
 
-pub async fn execute(session: &str, only: Option<&str>, config_path: Option<&str>) -> i32 {
-    let path = match config_path {
-        Some(p) => std::path::PathBuf::from(p),
-        None => match discover_config(&std::env::current_dir().unwrap()) {
-            Some(p) => p,
-            None => { eprintln!("error: no agent-procs.yaml found"); return 1; }
-        },
+pub async fn execute(cli_session: Option<&str>, only: Option<&str>, config_path: Option<&str>) -> i32 {
+    let (path, config) = match load_config(config_path) {
+        Ok(c) => c,
+        Err(e) => { eprintln!("error: {}", e); return 1; }
     };
 
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => { eprintln!("error: cannot read config: {}", e); return 1; }
-    };
-
-    let config: ProjectConfig = match serde_yaml::from_str(&content) {
-        Ok(c) => c,
-        Err(e) => { eprintln!("error: invalid config: {}", e); return 1; }
-    };
+    let session = resolve_session(cli_session, config.session.as_deref());
 
     let only_set: Option<Vec<&str>> = only.map(|s| s.split(',').collect());
 

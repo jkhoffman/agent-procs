@@ -2,8 +2,11 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+pub const DEFAULT_SESSION: &str = "default";
+
 #[derive(Debug, Deserialize)]
 pub struct ProjectConfig {
+    pub session: Option<String>,
     pub processes: HashMap<String, ProcessDef>,
 }
 
@@ -72,4 +75,21 @@ pub fn discover_config(start: &Path) -> Option<PathBuf> {
         if candidate.exists() { return Some(candidate); }
         if !dir.pop() { return None; }
     }
+}
+
+pub fn load_config(config_path: Option<&str>) -> Result<(PathBuf, ProjectConfig), String> {
+    let path = match config_path {
+        Some(p) => PathBuf::from(p),
+        None => discover_config(&std::env::current_dir().map_err(|e| format!("cannot get cwd: {}", e))?)
+            .ok_or_else(|| "no agent-procs.yaml found".to_string())?,
+    };
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read config: {}", e))?;
+    let config: ProjectConfig = serde_yaml::from_str(&content)
+        .map_err(|e| format!("invalid config: {}", e))?;
+    Ok((path, config))
+}
+
+pub fn resolve_session<'a>(cli_session: Option<&'a str>, config_session: Option<&'a str>) -> &'a str {
+    cli_session.or(config_session).unwrap_or(DEFAULT_SESSION)
 }

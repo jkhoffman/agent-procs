@@ -148,6 +148,7 @@ impl ProcessManager {
         for name in names {
             self.stop_process(&name).await;
         }
+        self.processes.clear();
         Response::Ok { message: "all processes stopped".into() }
     }
 
