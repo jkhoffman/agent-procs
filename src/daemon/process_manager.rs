@@ -149,7 +149,7 @@ impl ProcessManager {
             },
         );
 
-        Response::RunOk { name, id, pid }
+        Response::RunOk { name, id, pid, port: None, url: None }
     }
 
     pub async fn stop_process(&mut self, target: &str) -> Response {
@@ -253,6 +253,8 @@ impl ProcessManager {
                     None
                 },
                 command: p.command.clone(),
+                port: None,
+                url: None,
             })
             .collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));

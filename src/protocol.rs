@@ -49,6 +49,10 @@ pub enum Response {
         name: String,
         id: String,
         pid: u32,
+        #[serde(default)]
+        port: Option<u16>,
+        #[serde(default)]
+        url: Option<String>,
     },
     Status {
         processes: Vec<ProcessInfo>,
@@ -81,6 +85,10 @@ pub struct ProcessInfo {
     pub exit_code: Option<i32>,
     pub uptime_secs: Option<u64>,
     pub command: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

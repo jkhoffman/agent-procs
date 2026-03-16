@@ -27,6 +27,8 @@ fn test_status_response_roundtrip() {
             exit_code: None,
             uptime_secs: Some(150),
             command: "npm run dev".into(),
+            port: None,
+            url: None,
         }],
     };
     let json = serde_json::to_string(&resp).unwrap();
@@ -57,4 +59,36 @@ fn test_error_response() {
     let json = serde_json::to_string(&resp).unwrap();
     let decoded: Response = serde_json::from_str(&json).unwrap();
     assert_eq!(resp, decoded);
+}
+
+#[test]
+fn test_run_ok_with_port_and_url() {
+    let resp = Response::RunOk {
+        name: "web".into(),
+        id: "p1".into(),
+        pid: 42,
+        port: Some(3000),
+        url: Some("http://localhost:3000".into()),
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    let decoded: Response = serde_json::from_str(&json).unwrap();
+    assert_eq!(resp, decoded);
+}
+
+#[test]
+fn test_run_ok_without_port() {
+    let resp = Response::RunOk {
+        name: "web".into(),
+        id: "p1".into(),
+        pid: 42,
+        port: None,
+        url: None,
+    };
+    let json = serde_json::to_string(&resp).unwrap();
+    let decoded: Response = serde_json::from_str(&json).unwrap();
+    assert_eq!(resp, decoded);
+    // Ensure absent fields deserialize correctly from minimal JSON
+    let minimal = r#"{"type":"RunOk","name":"web","id":"p1","pid":42}"#;
+    let decoded2: Response = serde_json::from_str(minimal).unwrap();
+    assert_eq!(decoded2, resp);
 }

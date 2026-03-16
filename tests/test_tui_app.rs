@@ -92,5 +92,7 @@ fn make_info(name: &str, state: ProcessState) -> ProcessInfo {
         exit_code: None,
         uptime_secs: Some(10),
         command: "test".into(),
+        port: None,
+        url: None,
     }
 }

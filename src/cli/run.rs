@@ -8,7 +8,7 @@ pub async fn execute(session: &str, command: &str, name: Option<String>) -> i32 
         env: None,
     };
     match crate::cli::request(session, &req, true).await {
-        Ok(Response::RunOk { name, id, pid }) => {
+        Ok(Response::RunOk { name, id, pid, .. }) => {
             println!("{} (id: {}, pid: {})", name, id, pid);
             0
         }
