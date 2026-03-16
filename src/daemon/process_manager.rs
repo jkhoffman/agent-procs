@@ -366,6 +366,10 @@ impl ProcessManager {
         }
     }
 
+    pub fn session_name(&self) -> &str {
+        &self.session
+    }
+
     pub fn has_process(&self, target: &str) -> bool {
         self.find(target).is_some()
     }

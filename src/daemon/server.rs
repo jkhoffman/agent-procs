@@ -235,7 +235,7 @@ async fn handle_request(
             timeout_secs,
         } => {
             // Check process exists
-            {
+            let session_name = {
                 let s = state.lock().await;
                 if !s.process_manager.has_process(&target) {
                     return Response::Error {
@@ -243,9 +243,45 @@ async fn handle_request(
                         message: format!("process not found: {}", target),
                     };
                 }
-            }
-            // Subscribe to output and delegate to wait engine
+                s.process_manager.session_name().to_string()
+            };
+
+            // Subscribe BEFORE checking historical logs to avoid missing lines
+            // emitted between the historical scan and the subscription.
             let output_rx = state.lock().await.process_manager.output_tx.subscribe();
+
+            // Check historical log output for the pattern (fixes race where
+            // fast processes emit the pattern before Wait subscribes).
+            if let Some(ref pattern) = until {
+                let log_path =
+                    crate::paths::log_dir(&session_name).join(format!("{}.stdout", target));
+                if let Ok(content) = std::fs::read_to_string(&log_path) {
+                    let matched = if regex {
+                        regex::Regex::new(pattern)
+                            .map(|re| content.lines().any(|line| re.is_match(line)))
+                            .unwrap_or(false)
+                    } else {
+                        content.lines().any(|line| line.contains(pattern.as_str()))
+                    };
+                    if matched {
+                        // Find the matching line to return
+                        let line = content
+                            .lines()
+                            .find(|line| {
+                                if regex {
+                                    regex::Regex::new(pattern)
+                                        .map(|re| re.is_match(line))
+                                        .unwrap_or(false)
+                                } else {
+                                    line.contains(pattern.as_str())
+                                }
+                            })
+                            .unwrap_or("")
+                            .to_string();
+                        return Response::WaitMatch { line };
+                    }
+                }
+            }
             let timeout = Duration::from_secs(timeout_secs.unwrap_or(30));
             let state_clone = Arc::clone(state);
             let target_clone = target.clone();
