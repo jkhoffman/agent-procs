@@ -8,7 +8,7 @@ pub mod up;
 pub mod down;
 pub mod session_cmd;
 
-use crate::protocol::{Request, Response};
+use crate::protocol::{Request, Response, Stream as ProtoStream};
 use crate::paths;
 use crate::session;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -46,4 +46,37 @@ pub async fn request(session: &str, req: &Request, auto_spawn: bool) -> Result<R
     lines.read_line(&mut line).await.map_err(|e| format!("read error: {}", e))?;
 
     serde_json::from_str(&line).map_err(|e| format!("parse error: {}", e))
+}
+
+/// Send a request and read streaming responses until LogEnd or error.
+/// Calls `on_line` for each LogLine received. Returns the terminal response.
+pub async fn stream_responses(
+    session: &str,
+    req: &Request,
+    auto_spawn: bool,
+    mut on_line: impl FnMut(&str, ProtoStream, &str),
+) -> Result<Response, String> {
+    let stream = connect(session, auto_spawn).await?;
+    let (reader, mut writer) = stream.into_split();
+
+    let mut json = serde_json::to_string(req).unwrap();
+    json.push('\n');
+    writer.write_all(json.as_bytes()).await.map_err(|e| format!("write error: {}", e))?;
+    writer.flush().await.map_err(|e| format!("flush error: {}", e))?;
+
+    let mut lines = BufReader::new(reader);
+    loop {
+        let mut line = String::new();
+        let n = lines.read_line(&mut line).await.map_err(|e| format!("read error: {}", e))?;
+        if n == 0 { return Ok(Response::LogEnd); } // EOF
+
+        let resp: Response = serde_json::from_str(&line).map_err(|e| format!("parse error: {}", e))?;
+        match resp {
+            Response::LogLine { ref process, stream, ref line } => {
+                on_line(process, stream, line);
+            }
+            Response::LogEnd | Response::Error { .. } => return Ok(resp),
+            other => return Ok(other), // unexpected
+        }
+    }
 }
