@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
 use super::process_manager::ProcessManager;
@@ -44,6 +45,20 @@ pub async fn run(session: &str, socket_path: &Path) {
                     }
                 };
 
+                // Handle follow requests with streaming (before handle_request)
+                if let Request::Logs { follow: true, ref target, all, timeout_secs, lines, .. } = request {
+                    let output_rx = state.lock().await.process_manager.output_tx.subscribe();
+                    let timeout = Duration::from_secs(timeout_secs.unwrap_or(30));
+                    let max_lines = lines;
+                    let target_filter = target.clone();
+                    let show_all = all;
+
+                    handle_follow_stream(
+                        &writer, output_rx, target_filter, show_all, timeout, max_lines
+                    ).await;
+                    continue; // Don't call handle_request
+                }
+
                 let is_shutdown = matches!(request, Request::Shutdown);
 
                 let response = handle_request(&state, request).await;
@@ -56,6 +71,51 @@ pub async fn run(session: &str, socket_path: &Path) {
             }
         });
     }
+}
+
+async fn handle_follow_stream(
+    writer: &Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+    mut output_rx: broadcast::Receiver<super::log_writer::OutputLine>,
+    target: Option<String>,
+    all: bool,
+    timeout: Duration,
+    max_lines: Option<usize>,
+) {
+    let mut line_count: usize = 0;
+
+    let _result = tokio::time::timeout(timeout, async {
+        loop {
+            match output_rx.recv().await {
+                Ok(output_line) => {
+                    // Filter by target (unless --all)
+                    if !all {
+                        if let Some(ref t) = target {
+                            if output_line.process != *t { continue; }
+                        }
+                    }
+
+                    let resp = Response::LogLine {
+                        process: output_line.process,
+                        stream: output_line.stream,
+                        line: output_line.line,
+                    };
+                    if send_response(writer, &resp).await.is_err() {
+                        return; // Client disconnected
+                    }
+
+                    line_count += 1;
+                    if let Some(max) = max_lines {
+                        if line_count >= max { return; }
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return,
+            }
+        }
+    }).await;
+
+    // Send LogEnd (whether from timeout, line limit, or channel close)
+    let _ = send_response(writer, &Response::LogEnd).await;
 }
 
 async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Response {
@@ -109,9 +169,13 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
                 },
             ).await
         }
-        Request::Logs { .. } => {
-            // Logs are read directly from files by the CLI — no daemon involvement needed
-            Response::Error { code: 1, message: "logs are read directly from disk by CLI".into() }
+        Request::Logs { follow: false, .. } => {
+            // Non-follow logs are read directly from files by the CLI — no daemon involvement needed
+            Response::Error { code: 1, message: "non-follow logs are read directly from disk by CLI".into() }
+        }
+        Request::Logs { follow: true, .. } => {
+            // Handled separately in connection loop (needs streaming)
+            Response::Error { code: 1, message: "follow requests handled in connection loop".into() }
         }
         Request::Shutdown => {
             state.lock().await.process_manager.stop_all().await;
