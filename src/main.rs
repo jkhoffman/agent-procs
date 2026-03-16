@@ -82,8 +82,38 @@ enum SessionCommands {
 
 #[tokio::main]
 async fn main() {
+    // Check for hidden internal daemon-runner flag before clap parsing.
+    // This is invoked by spawn_daemon() to start the background daemon process.
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 3 && args[1] == "--run-daemon" {
+        let session = &args[2];
+        agent_procs::daemon::spawn::run_daemon(session).await;
+        return;
+    }
+
     let cli = Cli::parse();
-    // Commands will be wired up in later tasks
-    eprintln!("agent-procs: command not yet implemented");
-    std::process::exit(1);
+    let session = &cli.session;
+
+    let exit_code = match cli.command {
+        Commands::Run { command, name } => agent_procs::cli::run::execute(session, &command, name).await,
+        Commands::Stop { target } => agent_procs::cli::stop::execute(session, &target).await,
+        Commands::StopAll => agent_procs::cli::stop::execute_all(session).await,
+        Commands::Restart { target } => agent_procs::cli::restart::execute(session, &target).await,
+        Commands::Status { json } => agent_procs::cli::status::execute(session, json).await,
+        Commands::Logs { target, tail, follow, stderr, all, timeout } => {
+            agent_procs::cli::logs::execute(session, target.as_deref(), tail, follow, stderr, all, timeout).await
+        }
+        Commands::Wait { target, until, regex, exit, timeout } => {
+            agent_procs::cli::wait::execute(session, &target, until, regex, exit, timeout).await
+        }
+        Commands::Up { only, config } => {
+            agent_procs::cli::up::execute(session, only.as_deref(), config.as_deref()).await
+        }
+        Commands::Down => agent_procs::cli::down::execute(session).await,
+        Commands::Session { command } => match command {
+            SessionCommands::List => agent_procs::cli::session_cmd::list().await,
+            SessionCommands::Clean => agent_procs::cli::session_cmd::clean().await,
+        },
+    };
+    std::process::exit(exit_code);
 }
