@@ -32,6 +32,10 @@ agent-procs stop server
 Create an `agent-procs.yaml` to manage multiple processes together:
 
 ```yaml
+session: myproject                          # optional — isolates this project's processes
+proxy: true                                 # optional — enables reverse proxy
+proxy_port: 9095                            # optional — pin proxy to a specific port
+
 processes:
   db:
     cmd: docker compose up postgres
@@ -42,10 +46,9 @@ processes:
     env:
       DATABASE_URL: postgres://localhost:5432/mydb
     ready: "Listening on :8080"
+    port: 8080
     depends_on: [db]
 ```
-
-Fields: `cmd` (required), `cwd`, `env`, `ready` (stdout pattern that signals readiness), `depends_on`.
 
 Processes start in dependency order; independent ones run concurrently.
 
@@ -55,11 +58,54 @@ agent-procs up --only db,api      # start specific ones
 agent-procs down                  # stop all
 ```
 
+### Field reference
+
+**Per-process fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `cmd` | yes | Shell command to execute |
+| `cwd` | no | Working directory (relative to config file location) |
+| `env` | no | Environment variables (key: value map) |
+| `ready` | no | Stdout pattern that signals the process is ready |
+| `depends_on` | no | List of process names that must be ready first |
+| `port` | no | Port number — injected as `PORT` env var |
+
+**Top-level fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `session` | no | Session name (overridden by `--session` CLI flag) |
+| `proxy` | no | Enable reverse proxy (default: false) |
+| `proxy_port` | no | Pin proxy to a specific port (default: auto-assign from 9090-9190) |
+
+## Reverse proxy
+
+Give processes stable named URLs instead of port numbers. Opt-in via `proxy: true` in config or `--proxy` on the CLI.
+
+```bash
+$ agent-procs up
+Proxy listening on http://localhost:9090
+started api (http://api.localhost:9090)
+started web (http://web.localhost:9090)
+```
+
+- Processes without an explicit `port` get one auto-assigned (4000-4999 range)
+- `PORT` and `HOST=127.0.0.1` are injected into the process env (user env takes precedence)
+- Each session gets its own proxy port, so two projects can both have `api` without conflict
+
+Ad-hoc usage without a config file:
+
+```bash
+agent-procs run "node server.js" --name api --port 3001 --proxy
+# → http://api.localhost:9090
+```
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `run <cmd> [--name N]` | Spawn a background process |
+| `run <cmd> [--name N] [--port P] [--proxy]` | Spawn a background process |
 | `stop <name>` | Stop a process |
 | `stop-all` | Stop all processes |
 | `restart <name>` | Restart a process |
@@ -67,11 +113,12 @@ agent-procs down                  # stop all
 | `logs <name> [--tail N] [--follow] [--stderr] [--all]` | View process output |
 | `wait <name> --until <pattern> [--regex] [--timeout N]` | Wait for output pattern |
 | `wait <name> --exit [--timeout N]` | Wait for process to exit |
-| `up [--only X,Y] [--config path]` | Start from config file |
+| `up [--only X,Y] [--config path] [--proxy]` | Start from config file |
 | `down` | Stop config-managed processes |
 | `session list` | List active sessions |
 | `session clean` | Remove stale sessions |
 | `ui` | Open terminal UI |
+| `completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
 
 ## Sessions
 
