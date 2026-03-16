@@ -37,10 +37,10 @@ pub async fn execute(session: &str, only: Option<&str>, config_path: Option<&str
             let def = &config.processes[name];
             let mut cmd = def.cmd.clone();
             if !def.env.is_empty() {
-                let env_prefix: Vec<String> = def.env.iter()
-                    .map(|(k, v)| format!("{}={}", k, shell_escape(v)))
+                let exports: Vec<String> = def.env.iter()
+                    .map(|(k, v)| format!("export {}={}", k, shell_escape(v)))
                     .collect();
-                cmd = format!("{} {}", env_prefix.join(" "), cmd);
+                cmd = format!("{} && {}", exports.join(" && "), cmd);
             }
 
             // Resolve cwd relative to config file directory
