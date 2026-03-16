@@ -32,6 +32,10 @@ agent-procs stop server
 Create an `agent-procs.yaml` to manage multiple processes together:
 
 ```yaml
+session: myproject                          # optional — isolates this project's processes
+proxy: true                                 # optional — enables reverse proxy
+proxy_port: 9095                            # optional — pin proxy to a specific port
+
 processes:
   db:
     cmd: docker compose up postgres
@@ -42,10 +46,9 @@ processes:
     env:
       DATABASE_URL: postgres://localhost:5432/mydb
     ready: "Listening on :8080"
+    port: 8080
     depends_on: [db]
 ```
-
-Fields: `cmd` (required), `cwd`, `env`, `ready` (stdout pattern that signals readiness), `depends_on`, `port`.
 
 Processes start in dependency order; independent ones run concurrently.
 
@@ -55,21 +58,30 @@ agent-procs up --only db,api      # start specific ones
 agent-procs down                  # stop all
 ```
 
+### Field reference
+
+**Per-process fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `cmd` | yes | Shell command to execute |
+| `cwd` | no | Working directory (relative to config file location) |
+| `env` | no | Environment variables (key: value map) |
+| `ready` | no | Stdout pattern that signals the process is ready |
+| `depends_on` | no | List of process names that must be ready first |
+| `port` | no | Port number — injected as `PORT` env var |
+
+**Top-level fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `session` | no | Session name (overridden by `--session` CLI flag) |
+| `proxy` | no | Enable reverse proxy (default: false) |
+| `proxy_port` | no | Pin proxy to a specific port (default: auto-assign from 9090-9190) |
+
 ## Reverse proxy
 
-Give processes stable named URLs instead of port numbers. Opt-in via config or CLI flag.
-
-```yaml
-proxy: true
-processes:
-  api:
-    cmd: node server.js
-    port: 3001
-    ready: "Listening"
-  web:
-    cmd: next dev
-    depends_on: [api]
-```
+Give processes stable named URLs instead of port numbers. Opt-in via `proxy: true` in config or `--proxy` on the CLI.
 
 ```bash
 $ agent-procs up
@@ -78,9 +90,9 @@ started api (http://api.localhost:9090)
 started web (http://web.localhost:9090)
 ```
 
-When `proxy: true` is set, processes without an explicit `port` get one auto-assigned from the 4000-4999 range. The `PORT` and `HOST=127.0.0.1` environment variables are injected into each process (user-provided env takes precedence).
-
-Each session gets its own proxy port (auto-assigned from 9090-9190), so two projects can both have a process named `api` without conflict.
+- Processes without an explicit `port` get one auto-assigned (4000-4999 range)
+- `PORT` and `HOST=127.0.0.1` are injected into the process env (user env takes precedence)
+- Each session gets its own proxy port, so two projects can both have `api` without conflict
 
 Ad-hoc usage without a config file:
 
@@ -88,8 +100,6 @@ Ad-hoc usage without a config file:
 agent-procs run "node server.js" --name api --port 3001 --proxy
 # → http://api.localhost:9090
 ```
-
-Config fields: `proxy` (top-level, default false), `proxy_port` (top-level, optional), `port` (per-process, optional).
 
 ## Commands
 

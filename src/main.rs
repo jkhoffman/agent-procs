@@ -28,7 +28,7 @@ Exit codes:
   2  No logs found for target process
 
 Config file format (agent-procs.yaml):
-  session: myproject                          # optional, used by up/down
+  session: myproject                          # optional, isolates processes
   proxy: true                                 # optional, enables reverse proxy
   proxy_port: 9095                            # optional, pin proxy port
   processes:
@@ -37,15 +37,26 @@ Config file format (agent-procs.yaml):
       ready: \"ready to accept connections\"
     api:
       cmd: ./start-api-server
-      cwd: ./backend
+      cwd: ./backend                          # relative to config file
       env:
-        DATABASE_URL: postgres://localhost:5432/mydb
+        DATABASE_URL: postgres://...
       ready: \"Listening on :8080\"
-      port: 8080                              # optional, injected as PORT env
-      depends_on: [db]
+      port: 8080                              # injected as PORT env var
+      depends_on: [db]                        # db must be ready first
 
-  Top-level: session, proxy, proxy_port (all optional)
-  Process fields: cmd (required), cwd, env, ready (stdout pattern), depends_on, port
+  Top-level fields (all optional):
+    session     — session name (overridden by --session flag)
+    proxy       — enable reverse proxy (default: false)
+    proxy_port  — pin proxy to a port (default: auto 9090-9190)
+
+  Per-process fields:
+    cmd         — shell command to execute (required)
+    cwd         — working directory, relative to config file
+    env         — environment variables (key: value map)
+    ready       — stdout pattern that signals readiness
+    depends_on  — list of processes that must be ready first
+    port        — port number, injected as PORT and HOST env vars
+
   Processes start in dependency order; independent ones run concurrently.
   With proxy: true, processes get named URLs (e.g. http://api.localhost:9090)."
 )]
