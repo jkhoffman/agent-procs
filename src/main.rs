@@ -63,6 +63,12 @@ enum Commands {
         /// Process name (auto-generated if omitted)
         #[arg(long)]
         name: Option<String>,
+        /// Assign a specific port (injected as PORT env var)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Enable reverse proxy for this session
+        #[arg(long)]
+        proxy: bool,
     },
     /// Stop a process
     #[command(display_order = 2)]
@@ -177,8 +183,8 @@ async fn main() {
     let session = cli_session_ref.unwrap_or(agent_procs::config::DEFAULT_SESSION);
 
     let exit_code = match cli.command {
-        Commands::Run { command, name } => {
-            agent_procs::cli::run::execute(session, &command, name).await
+        Commands::Run { command, name, port, proxy } => {
+            agent_procs::cli::run::execute(session, &command, name, port, proxy).await
         }
         Commands::Stop { target } => agent_procs::cli::stop::execute(session, &target).await,
         Commands::StopAll => agent_procs::cli::stop::execute_all(session).await,
