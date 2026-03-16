@@ -377,6 +377,41 @@ impl ProcessManager {
         self.find(target).is_some()
     }
 
+    pub fn get_process_port(&self, name: &str) -> Option<u16> {
+        self.processes
+            .get(name)
+            .and_then(|p| if p.child.is_some() { p.port } else { None })
+    }
+
+    pub fn status_snapshot(&self) -> Response {
+        // Like status() but takes &self not &mut self (no refresh_exit_states)
+        let mut infos: Vec<ProcessInfo> = self
+            .processes
+            .values()
+            .map(|p| ProcessInfo {
+                name: p.name.clone(),
+                id: p.id.clone(),
+                pid: p.pid,
+                state: if p.child.is_some() {
+                    ProcessState::Running
+                } else {
+                    ProcessState::Exited
+                },
+                exit_code: p.exit_code,
+                uptime_secs: if p.child.is_some() {
+                    Some(p.started_at.elapsed().as_secs())
+                } else {
+                    None
+                },
+                command: p.command.clone(),
+                port: p.port,
+                url: p.port.map(|port| format!("http://127.0.0.1:{}", port)),
+            })
+            .collect();
+        infos.sort_by(|a, b| a.name.cmp(&b.name));
+        Response::Status { processes: infos }
+    }
+
     fn find(&self, target: &str) -> Option<&ManagedProcess> {
         self.processes
             .get(target)
