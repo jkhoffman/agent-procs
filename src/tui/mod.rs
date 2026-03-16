@@ -302,7 +302,6 @@ async fn key_reader(tx: mpsc::Sender<AppEvent>) {
 /// Load the tail of each process's log files from disk into the app's output buffers.
 /// This populates the TUI with historical output from before it was launched.
 fn load_historical_logs(session: &str, app: &mut App) {
-    const TAIL_LINES: usize = 200;
     let log_dir = paths::log_dir(session);
 
     let entries = match std::fs::read_dir(&log_dir) {
@@ -321,16 +320,7 @@ fn load_historical_logs(session: &str, app: &mut App) {
         };
 
         if let Ok(file) = std::fs::File::open(entry.path()) {
-            // Read last TAIL_LINES using a ring buffer
-            let mut ring: std::collections::VecDeque<String> =
-                std::collections::VecDeque::with_capacity(TAIL_LINES);
             for line in StdBufReader::new(file).lines().map_while(Result::ok) {
-                if ring.len() == TAIL_LINES {
-                    ring.pop_front();
-                }
-                ring.push_back(line);
-            }
-            for line in ring {
                 app.push_output(&proc_name, stream, &line);
             }
         }
