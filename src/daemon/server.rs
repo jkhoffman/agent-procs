@@ -167,13 +167,13 @@ async fn handle_request(state: &Arc<Mutex<DaemonState>>, request: Request) -> Re
             name,
             cwd,
             env,
-            port: _,
+            port,
         } => {
             state
                 .lock()
                 .await
                 .process_manager
-                .spawn_process(&command, name, cwd.as_deref(), env.as_ref())
+                .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port)
                 .await
         }
         Request::Stop { target } => {

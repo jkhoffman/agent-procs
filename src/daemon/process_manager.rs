@@ -20,6 +20,7 @@ pub struct ManagedProcess {
     pub pid: u32,
     pub started_at: Instant,
     pub exit_code: Option<i32>,
+    pub port: Option<u16>,
 }
 
 pub struct ProcessManager {
@@ -46,6 +47,7 @@ impl ProcessManager {
         name: Option<String>,
         cwd: Option<&str>,
         env: Option<&HashMap<String, String>>,
+        port: Option<u16>,
     ) -> Response {
         let id = self.id_counter.next_id();
         let name = name.unwrap_or_else(|| id.clone());
@@ -76,7 +78,18 @@ impl ProcessManager {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
-        if let Some(env_vars) = env {
+        if let Some(p) = port {
+            // Inject PORT and HOST; user-supplied env takes precedence
+            let mut merged_env: HashMap<String, String> = HashMap::new();
+            merged_env.insert("PORT".to_string(), p.to_string());
+            merged_env.insert("HOST".to_string(), "127.0.0.1".to_string());
+            if let Some(env_vars) = env {
+                for (k, v) in env_vars {
+                    merged_env.insert(k.clone(), v.clone());
+                }
+            }
+            cmd.envs(&merged_env);
+        } else if let Some(env_vars) = env {
             cmd.envs(env_vars);
         }
         // Put child in its own process group so we can signal the entire tree
@@ -146,10 +159,12 @@ impl ProcessManager {
                 pid,
                 started_at: Instant::now(),
                 exit_code: None,
+                port,
             },
         );
 
-        Response::RunOk { name, id, pid, port: None, url: None }
+        let url = port.map(|p| format!("http://127.0.0.1:{}", p));
+        Response::RunOk { name, id, pid, port, url }
     }
 
     pub async fn stop_process(&mut self, target: &str) -> Response {
@@ -211,12 +226,13 @@ impl ProcessManager {
     }
 
     pub async fn restart_process(&mut self, target: &str) -> Response {
-        let (command, name, cwd, env) = match self.find(target) {
+        let (command, name, cwd, env, port) = match self.find(target) {
             Some(p) => (
                 p.command.clone(),
                 p.name.clone(),
                 p.cwd.clone(),
                 p.env.clone(),
+                p.port,
             ),
             None => {
                 return Response::Error {
@@ -228,7 +244,7 @@ impl ProcessManager {
         self.stop_process(target).await;
         self.processes.remove(&name);
         let env = if env.is_empty() { None } else { Some(env) };
-        self.spawn_process(&command, Some(name), cwd.as_deref(), env.as_ref())
+        self.spawn_process(&command, Some(name), cwd.as_deref(), env.as_ref(), port)
             .await
     }
 
@@ -253,8 +269,8 @@ impl ProcessManager {
                     None
                 },
                 command: p.command.clone(),
-                port: None,
-                url: None,
+                port: p.port,
+                url: p.port.map(|port| format!("http://127.0.0.1:{}", port)),
             })
             .collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));
