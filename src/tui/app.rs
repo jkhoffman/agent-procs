@@ -9,48 +9,42 @@ pub enum StreamMode { Stdout, Stderr, Both }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LineSource { Stdout, Stderr }
 
+/// Single ring buffer storing all output with source tags.
+/// Stdout/stderr views are filtered from the same data — no duplication.
 pub struct OutputBuffer {
-    stdout: VecDeque<String>,
-    stderr: VecDeque<String>,
-    /// Interleaved (source, line) for "both" mode, in arrival order
-    all: VecDeque<(LineSource, String)>,
+    lines: VecDeque<(LineSource, String)>,
     max_lines: usize,
 }
 
 impl OutputBuffer {
     pub fn new(max_lines: usize) -> Self {
         Self {
-            stdout: VecDeque::with_capacity(max_lines),
-            stderr: VecDeque::with_capacity(max_lines),
-            all: VecDeque::with_capacity(max_lines),
+            lines: VecDeque::with_capacity(max_lines),
             max_lines,
         }
     }
 
-    pub fn push_stdout(&mut self, line: String) {
-        if self.stdout.len() == self.max_lines { self.stdout.pop_front(); }
-        self.stdout.push_back(line.clone());
-        if self.all.len() == self.max_lines { self.all.pop_front(); }
-        self.all.push_back((LineSource::Stdout, line));
-    }
-
-    pub fn push_stderr(&mut self, line: String) {
-        if self.stderr.len() == self.max_lines { self.stderr.pop_front(); }
-        self.stderr.push_back(line.clone());
-        if self.all.len() == self.max_lines { self.all.pop_front(); }
-        self.all.push_back((LineSource::Stderr, line));
+    pub fn push(&mut self, source: LineSource, line: String) {
+        if self.lines.len() == self.max_lines { self.lines.pop_front(); }
+        self.lines.push_back((source, line));
     }
 
     pub fn stdout_lines(&self) -> Vec<&str> {
-        self.stdout.iter().map(|s| s.as_str()).collect()
+        self.lines.iter()
+            .filter(|(src, _)| *src == LineSource::Stdout)
+            .map(|(_, s)| s.as_str())
+            .collect()
     }
 
     pub fn stderr_lines(&self) -> Vec<&str> {
-        self.stderr.iter().map(|s| s.as_str()).collect()
+        self.lines.iter()
+            .filter(|(src, _)| *src == LineSource::Stderr)
+            .map(|(_, s)| s.as_str())
+            .collect()
     }
 
     pub fn all_lines(&self) -> Vec<(LineSource, &str)> {
-        self.all.iter().map(|(src, s)| (*src, s.as_str())).collect()
+        self.lines.iter().map(|(src, s)| (*src, s.as_str())).collect()
     }
 }
 
@@ -132,10 +126,11 @@ impl App {
         let buf = self.buffers
             .entry(process.to_string())
             .or_insert_with(|| OutputBuffer::new(MAX_BUFFER_LINES));
-        match stream {
-            Stream::Stdout => buf.push_stdout(line.to_string()),
-            Stream::Stderr => buf.push_stderr(line.to_string()),
-        }
+        let source = match stream {
+            Stream::Stdout => LineSource::Stdout,
+            Stream::Stderr => LineSource::Stderr,
+        };
+        buf.push(source, line.to_string());
     }
 
     pub fn quit(&mut self) {

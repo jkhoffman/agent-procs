@@ -5,7 +5,7 @@ use agent_procs::protocol::{ProcessInfo, ProcessState, Stream};
 fn test_output_buffer_ring_behavior() {
     let mut buf = OutputBuffer::new(5); // max 5 lines
     for i in 0..8 {
-        buf.push_stdout(format!("line {}", i));
+        buf.push(LineSource::Stdout, format!("line {}", i));
     }
     let lines = buf.stdout_lines();
     assert_eq!(lines.len(), 5);
@@ -16,9 +16,9 @@ fn test_output_buffer_ring_behavior() {
 #[test]
 fn test_output_buffer_stderr() {
     let mut buf = OutputBuffer::new(100);
-    buf.push_stdout("out1".into());
-    buf.push_stderr("err1".into());
-    buf.push_stdout("out2".into());
+    buf.push(LineSource::Stdout, "out1".into());
+    buf.push(LineSource::Stderr, "err1".into());
+    buf.push(LineSource::Stdout, "out2".into());
 
     assert_eq!(buf.stdout_lines().len(), 2);
     assert_eq!(buf.stderr_lines().len(), 1);

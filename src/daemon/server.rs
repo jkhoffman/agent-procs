@@ -12,13 +12,11 @@ use super::process_manager::ProcessManager;
 
 pub struct DaemonState {
     pub process_manager: ProcessManager,
-    pub session: String,
 }
 
 pub async fn run(session: &str, socket_path: &Path) {
     let state = Arc::new(Mutex::new(DaemonState {
         process_manager: ProcessManager::new(session),
-        session: session.to_string(),
     }));
 
     let listener = UnixListener::bind(socket_path).expect("failed to bind socket");
