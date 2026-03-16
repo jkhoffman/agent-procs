@@ -65,6 +65,15 @@ agent-procs stop-all          # stop everything
 agent-procs down              # stop everything (config-managed)
 ```
 
+## Monitoring (TUI)
+
+```bash
+agent-procs ui                    # open terminal UI for current session
+agent-procs ui --session frontend # specific session
+```
+
+Keybindings: ↑↓ select, `r` restart, `x` stop, `X` stop-all, `e` cycle stdout/stderr/both, Space pause, `q` quit, `Q` quit+stop.
+
 ## Common recipes
 
 **Start a full dev stack:**

@@ -65,6 +65,10 @@ pub struct App {
     pub stop_all_on_quit: bool,
 }
 
+impl Default for App {
+    fn default() -> Self { Self::new() }
+}
+
 impl App {
     pub fn new() -> Self {
         Self {
@@ -118,8 +122,8 @@ impl App {
         self.paused = !self.paused;
         if !self.paused {
             // Reset scroll offset to bottom on unpause
-            if let Some(name) = self.selected_name() {
-                self.scroll_offsets.remove(&name.to_string());
+            if let Some(name) = self.processes.get(self.selected).map(|p| p.name.clone()) {
+                self.scroll_offsets.remove(&name);
             }
         }
     }
