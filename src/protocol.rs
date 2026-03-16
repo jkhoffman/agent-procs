@@ -15,7 +15,16 @@ pub enum Request {
     StopAll,
     Restart { target: String },
     Status,
-    Logs { target: Option<String>, tail: usize, follow: bool, stderr: bool, all: bool, timeout_secs: Option<u64> },
+    Logs {
+        target: Option<String>,
+        tail: usize,
+        follow: bool,
+        stderr: bool,
+        all: bool,
+        timeout_secs: Option<u64>,
+        #[serde(default)]
+        lines: Option<usize>,
+    },
     Wait { target: String, until: Option<String>, regex: bool, exit: bool, timeout_secs: Option<u64> },
     Shutdown,
 }

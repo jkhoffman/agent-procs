@@ -4,7 +4,7 @@ use std::fs::File;
 
 pub async fn execute(
     session: &str, target: Option<&str>, tail: usize,
-    follow: bool, stderr: bool, all: bool, _timeout: Option<u64>,
+    follow: bool, stderr: bool, all: bool, _timeout: Option<u64>, _lines: Option<usize>,
 ) -> i32 {
     // Note: --follow is deferred. The flag is accepted but ignored with a warning.
     if follow {

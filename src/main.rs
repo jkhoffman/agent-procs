@@ -45,6 +45,9 @@ enum Commands {
         all: bool,
         #[arg(long)]
         timeout: Option<u64>,
+        /// Max lines for --follow
+        #[arg(long)]
+        lines: Option<usize>,
     },
     /// Wait for a process condition
     Wait {
@@ -100,8 +103,8 @@ async fn main() {
         Commands::StopAll => agent_procs::cli::stop::execute_all(session).await,
         Commands::Restart { target } => agent_procs::cli::restart::execute(session, &target).await,
         Commands::Status { json } => agent_procs::cli::status::execute(session, json).await,
-        Commands::Logs { target, tail, follow, stderr, all, timeout } => {
-            agent_procs::cli::logs::execute(session, target.as_deref(), tail, follow, stderr, all, timeout).await
+        Commands::Logs { target, tail, follow, stderr, all, timeout, lines } => {
+            agent_procs::cli::logs::execute(session, target.as_deref(), tail, follow, stderr, all, timeout, lines).await
         }
         Commands::Wait { target, until, regex, exit, timeout } => {
             agent_procs::cli::wait::execute(session, &target, until, regex, exit, timeout).await
