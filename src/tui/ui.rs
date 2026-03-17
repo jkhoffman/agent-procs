@@ -1,9 +1,9 @@
 use crate::protocol::ProcessState;
-use crate::tui::app::{App, LineSource, StreamMode};
+use crate::tui::app::{App, InputMode, LineSource, StreamMode};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -65,54 +65,77 @@ fn draw_process_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(list, area);
 }
 
-fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
-    let name = app.selected_name().unwrap_or("(none)");
+fn draw_output(frame: &mut Frame, app: &mut App, area: Rect) {
+    let name = app.selected_name().unwrap_or("(none)").to_string();
     let mode_label = match app.stream_mode {
         StreamMode::Stdout => "stdout",
         StreamMode::Stderr => "stderr",
         StreamMode::Both => "all",
     };
     let pause_indicator = if app.paused { " [PAUSED]" } else { "" };
-    let title = format!(" Output: {} ({}){}  ", name, mode_label, pause_indicator);
+    let filter_indicator = match (&app.input_mode, &app.filter) {
+        (InputMode::FilterInput, _) => format!(" /{}", app.filter_buf),
+        (_, Some(pat)) => format!(" [filter: {}]", pat),
+        _ => String::new(),
+    };
+    let title = format!(
+        " Output: {} ({}){}{}  ",
+        name, mode_label, pause_indicator, filter_indicator
+    );
 
-    let lines: Vec<Line> = if let Some(buf) = app.selected_name().and_then(|n| app.buffers.get(n)) {
+    let raw_lines: Vec<(Option<LineSource>, String)> = if let Some(buf) = app.buffers.get(&name) {
         match app.stream_mode {
             StreamMode::Stdout => buf
                 .stdout_lines()
-                .iter()
-                .map(|l| Line::from((*l).to_string()))
+                .into_iter()
+                .map(|l| (Some(LineSource::Stdout), l.to_string()))
                 .collect(),
             StreamMode::Stderr => buf
                 .stderr_lines()
-                .iter()
-                .map(|l| {
-                    Line::from(Span::styled(
-                        (*l).to_string(),
-                        Style::default().fg(Color::Yellow),
-                    ))
-                })
+                .into_iter()
+                .map(|l| (Some(LineSource::Stderr), l.to_string()))
                 .collect(),
             StreamMode::Both => buf
                 .all_lines()
-                .iter()
-                .map(|(src, l)| match src {
-                    LineSource::Stdout => Line::from((*l).to_string()),
-                    LineSource::Stderr => Line::from(Span::styled(
-                        (*l).to_string(),
-                        Style::default().fg(Color::Yellow),
-                    )),
-                })
+                .into_iter()
+                .map(|(src, l)| (Some(src), l.to_string()))
                 .collect(),
         }
     } else {
-        vec![Line::from("No output yet".to_string()).style(Style::default().fg(Color::DarkGray))]
+        vec![(None, "No output yet".to_string())]
     };
 
-    // Calculate scroll: show bottom of output unless paused with offset
+    // Apply text filter
+    let filtered: Vec<&(Option<LineSource>, String)> = match &app.filter {
+        Some(pat) => raw_lines
+            .iter()
+            .filter(|(_, l)| l.contains(pat.as_str()))
+            .collect(),
+        None => raw_lines.iter().collect(),
+    };
+
+    let lines: Vec<Line> = filtered
+        .iter()
+        .map(|(src, l)| match src {
+            Some(LineSource::Stderr) => {
+                Line::from(Span::styled(l.clone(), Style::default().fg(Color::Yellow)))
+            }
+            None => Line::from(l.clone()).style(Style::default().fg(Color::DarkGray)),
+            _ => Line::from(l.clone()),
+        })
+        .collect();
+
+    // Cache visible height for scroll calculations
     let visible_height = area.height.saturating_sub(2) as usize; // -2 for borders
+    app.visible_height = visible_height;
+
     let total_lines = lines.len();
     let scroll_offset = if app.paused {
-        app.scroll_offsets.get(name).copied().unwrap_or(0)
+        app.scroll_offsets
+            .get(name.as_str())
+            .copied()
+            .unwrap_or(0)
+            .min(total_lines.saturating_sub(visible_height))
     } else {
         0
     };
@@ -126,8 +149,14 @@ fn draw_output(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let keys =
-        " ↑↓ select  r restart  x stop  X stop-all  e stream  space pause  q quit  Q quit+stop ";
+    let keys = if app.input_mode == InputMode::FilterInput {
+        " type to filter, Enter confirm, Esc cancel ".to_string()
+    } else if app.paused {
+        " PgUp/u scroll up  PgDn/d scroll down  g top  G bottom  Space unpause  / filter  Esc clear filter ".to_string()
+    } else {
+        " ↑↓ select  r restart  x stop  X stop-all  e stream  Space pause  u/d scroll  / filter  q quit  Q quit+stop ".to_string()
+    };
+
     let counts = format!(
         " {} running, {} exited ",
         app.running_count(),

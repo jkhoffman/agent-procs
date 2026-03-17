@@ -129,7 +129,7 @@ pub async fn run(session: &str) -> i32 {
 
     // Main render loop
     while app.running {
-        if let Err(e) = terminal.draw(|f| ui::draw(f, &app)) {
+        if let Err(e) = terminal.draw(|f| ui::draw(f, &mut app)) {
             eprintln!("error: terminal draw failed: {}", e);
             break;
         }
@@ -138,42 +138,60 @@ pub async fn run(session: &str) -> i32 {
         if let Some(event) = rx.recv().await {
             match event {
                 AppEvent::Key(key) => {
-                    let action = input::handle_key(key);
-                    match action {
-                        input::Action::SelectNext => app.select_next(),
-                        input::Action::SelectPrev => app.select_prev(),
-                        input::Action::CycleStream => app.cycle_stream_mode(),
-                        input::Action::TogglePause => app.toggle_pause(),
-                        input::Action::Quit => app.quit(),
-                        input::Action::QuitAndStop => app.quit_and_stop(),
-                        input::Action::Stop => {
-                            if let Some(name) = app.selected_name() {
-                                let _ = cli::request(
-                                    session,
-                                    &Request::Stop {
-                                        target: name.to_string(),
-                                    },
-                                    false,
-                                )
-                                .await;
+                    // Route keys based on input mode
+                    if app.input_mode == app::InputMode::FilterInput {
+                        match input::handle_filter_key(key) {
+                            input::FilterAction::Char(c) => app.filter_buf.push(c),
+                            input::FilterAction::Backspace => {
+                                app.filter_buf.pop();
                             }
+                            input::FilterAction::Confirm => app.confirm_filter(),
+                            input::FilterAction::Cancel => app.cancel_filter(),
                         }
-                        input::Action::StopAll => {
-                            let _ = cli::request(session, &Request::StopAll, false).await;
-                        }
-                        input::Action::Restart => {
-                            if let Some(name) = app.selected_name() {
-                                let _ = cli::request(
-                                    session,
-                                    &Request::Restart {
-                                        target: name.to_string(),
-                                    },
-                                    false,
-                                )
-                                .await;
+                    } else {
+                        let action = input::handle_key(key);
+                        match action {
+                            input::Action::SelectNext => app.select_next(),
+                            input::Action::SelectPrev => app.select_prev(),
+                            input::Action::CycleStream => app.cycle_stream_mode(),
+                            input::Action::TogglePause => app.toggle_pause(),
+                            input::Action::ScrollUp => app.scroll_up(),
+                            input::Action::ScrollDown => app.scroll_down(),
+                            input::Action::ScrollToTop => app.scroll_to_top(),
+                            input::Action::ScrollToBottom => app.scroll_to_bottom(),
+                            input::Action::StartFilter => app.start_filter(),
+                            input::Action::ClearFilter => app.clear_filter(),
+                            input::Action::Quit => app.quit(),
+                            input::Action::QuitAndStop => app.quit_and_stop(),
+                            input::Action::Stop => {
+                                if let Some(name) = app.selected_name() {
+                                    let _ = cli::request(
+                                        session,
+                                        &Request::Stop {
+                                            target: name.to_string(),
+                                        },
+                                        false,
+                                    )
+                                    .await;
+                                }
                             }
+                            input::Action::StopAll => {
+                                let _ = cli::request(session, &Request::StopAll, false).await;
+                            }
+                            input::Action::Restart => {
+                                if let Some(name) = app.selected_name() {
+                                    let _ = cli::request(
+                                        session,
+                                        &Request::Restart {
+                                            target: name.to_string(),
+                                        },
+                                        false,
+                                    )
+                                    .await;
+                                }
+                            }
+                            input::Action::None => {}
                         }
-                        input::Action::None => {}
                     }
                 }
                 AppEvent::OutputLine {

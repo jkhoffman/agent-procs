@@ -62,6 +62,15 @@ impl OutputBuffer {
     }
 }
 
+/// Input mode for the TUI.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InputMode {
+    /// Normal keybinding mode.
+    Normal,
+    /// Typing a filter pattern.
+    FilterInput,
+}
+
 pub struct App {
     pub processes: Vec<ProcessInfo>,
     pub selected: usize,
@@ -71,6 +80,13 @@ pub struct App {
     pub scroll_offsets: HashMap<String, usize>,
     pub running: bool,
     pub stop_all_on_quit: bool,
+    pub input_mode: InputMode,
+    /// In-progress filter text while the user is typing.
+    pub filter_buf: String,
+    /// Active filter applied to output lines. `None` means no filter.
+    pub filter: Option<String>,
+    /// Cached visible height of the output pane (set during render).
+    pub visible_height: usize,
 }
 
 impl Default for App {
@@ -90,6 +106,10 @@ impl App {
             scroll_offsets: HashMap::new(),
             running: true,
             stop_all_on_quit: false,
+            input_mode: InputMode::Normal,
+            filter_buf: String::new(),
+            filter: None,
+            visible_height: 20,
         }
     }
 
@@ -136,6 +156,87 @@ impl App {
                 self.scroll_offsets.remove(&name);
             }
         }
+    }
+
+    /// Scroll up by half a page. Auto-pauses if not already paused.
+    pub fn scroll_up(&mut self) {
+        if !self.paused {
+            self.paused = true;
+        }
+        if let Some(name) = self.selected_name().map(str::to_string) {
+            let half_page = (self.visible_height / 2).max(1);
+            let offset = self.scroll_offsets.entry(name).or_insert(0);
+            *offset = offset.saturating_add(half_page);
+        }
+    }
+
+    /// Scroll down by half a page. If we reach the bottom, unpause.
+    pub fn scroll_down(&mut self) {
+        if let Some(name) = self.selected_name().map(str::to_string) {
+            let half_page = (self.visible_height / 2).max(1);
+            let offset = self.scroll_offsets.entry(name).or_insert(0);
+            *offset = offset.saturating_sub(half_page);
+            if *offset == 0 {
+                self.paused = false;
+            }
+        }
+    }
+
+    pub fn scroll_to_top(&mut self) {
+        if !self.paused {
+            self.paused = true;
+        }
+        if let Some(name) = self.selected_name().map(str::to_string) {
+            let total = self.line_count_for(&name);
+            self.scroll_offsets.insert(name, total);
+        }
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        if let Some(name) = self.selected_name().map(str::to_string) {
+            self.scroll_offsets.remove(&name);
+            self.paused = false;
+        }
+    }
+
+    /// Count visible lines for the selected process (respecting stream mode and filter).
+    fn line_count_for(&self, name: &str) -> usize {
+        let Some(buf) = self.buffers.get(name) else {
+            return 0;
+        };
+        let lines = match self.stream_mode {
+            StreamMode::Stdout => buf.stdout_lines(),
+            StreamMode::Stderr => buf.stderr_lines(),
+            StreamMode::Both => buf.all_lines().into_iter().map(|(_, l)| l).collect(),
+        };
+        match &self.filter {
+            Some(pat) => lines.iter().filter(|l| l.contains(pat.as_str())).count(),
+            None => lines.len(),
+        }
+    }
+
+    pub fn start_filter(&mut self) {
+        self.input_mode = InputMode::FilterInput;
+        self.filter_buf = self.filter.clone().unwrap_or_default();
+    }
+
+    pub fn confirm_filter(&mut self) {
+        self.input_mode = InputMode::Normal;
+        if self.filter_buf.is_empty() {
+            self.filter = None;
+        } else {
+            self.filter = Some(self.filter_buf.clone());
+        }
+    }
+
+    pub fn cancel_filter(&mut self) {
+        self.input_mode = InputMode::Normal;
+        self.filter_buf.clear();
+    }
+
+    pub fn clear_filter(&mut self) {
+        self.filter = None;
+        self.filter_buf.clear();
     }
 
     pub fn push_output(&mut self, process: &str, stream: Stream, line: &str) {
