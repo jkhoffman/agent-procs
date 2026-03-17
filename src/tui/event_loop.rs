@@ -1,11 +1,11 @@
-use crate::cli;
-use crate::paths;
-use crate::protocol::{Request, Response, Stream as ProtoStream};
 use super::app::App;
 use super::input;
+use crate::cli;
+use crate::cli::logs::tail_file;
+use crate::paths;
+use crate::protocol::{Request, Response, Stream as ProtoStream};
 use crossterm::event::{Event, EventStream, MouseButton, MouseEventKind};
 use futures::StreamExt;
-use crate::cli::logs::tail_file;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, interval};

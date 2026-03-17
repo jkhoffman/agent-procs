@@ -88,9 +88,10 @@ fn draw_output(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let to_styled_line = |src: Option<LineSource>, text: &str| -> Line<'static> {
         match src {
-            Some(LineSource::Stderr) => {
-                Line::from(Span::styled(text.to_string(), Style::default().fg(Color::Yellow)))
-            }
+            Some(LineSource::Stderr) => Line::from(Span::styled(
+                text.to_string(),
+                Style::default().fg(Color::Yellow),
+            )),
             None => Line::from(text.to_string()).style(Style::default().fg(Color::DarkGray)),
             _ => Line::from(text.to_string()),
         }

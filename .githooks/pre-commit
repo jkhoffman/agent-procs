@@ -1,0 +1,25 @@
+#!/bin/sh
+# Pre-commit hook: format, lint, and test before allowing a commit.
+# Install: git config core.hooksPath .githooks
+
+set -e
+
+echo "pre-commit: cargo fmt --check"
+cargo fmt --check 2>&1 || {
+    echo "error: cargo fmt failed. Run 'cargo fmt' and try again."
+    exit 1
+}
+
+echo "pre-commit: cargo clippy"
+cargo clippy -- -D warnings 2>&1 || {
+    echo "error: clippy found warnings."
+    exit 1
+}
+
+echo "pre-commit: cargo test"
+cargo test -- --test-threads=1 2>&1 || {
+    echo "error: tests failed."
+    exit 1
+}
+
+echo "pre-commit: all checks passed"

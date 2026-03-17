@@ -1,7 +1,9 @@
 use crate::daemon::log_writer::{self, OutputLine};
 use crate::daemon::port_allocator::PortAllocator;
 use crate::paths;
-use crate::protocol::{ErrorCode, ProcessInfo, ProcessState, Response, Stream as ProtoStream, process_url};
+use crate::protocol::{
+    ErrorCode, ProcessInfo, ProcessState, Response, Stream as ProtoStream, process_url,
+};
 use crate::session::IdCounter;
 use std::collections::HashMap;
 use std::process::Stdio;

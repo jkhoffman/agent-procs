@@ -183,9 +183,7 @@ enum Commands {
     },
     /// Internal: run as daemon (used by `spawn_daemon`)
     #[command(hide = true)]
-    RunDaemon {
-        session: String,
-    },
+    RunDaemon { session: String },
 }
 
 #[derive(Subcommand)]

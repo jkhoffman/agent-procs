@@ -53,9 +53,7 @@ impl OutputBuffer {
     }
 
     pub fn all_lines(&self) -> impl Iterator<Item = (LineSource, &str)> {
-        self.lines
-            .iter()
-            .map(|(src, s)| (*src, s.as_str()))
+        self.lines.iter().map(|(src, s)| (*src, s.as_str()))
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::daemon::actor::{PmHandle, ProcessManagerActor, ProxyState};
 use crate::daemon::wait_engine;
-use crate::protocol::{self, ErrorCode, Request, Response, PROTOCOL_VERSION};
+use crate::protocol::{self, ErrorCode, PROTOCOL_VERSION, Request, Response};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -134,8 +134,7 @@ pub async fn run(session: &str, socket_path: &Path) {
 
                 let is_shutdown = matches!(request, Request::Shutdown);
 
-                let response =
-                    handle_request(&handle, &shutdown, &proxy_state_rx, request).await;
+                let response = handle_request(&handle, &shutdown, &proxy_state_rx, request).await;
                 let _ = send_response(&writer, &response).await;
 
                 if is_shutdown {
@@ -314,10 +313,7 @@ async fn handle_request(
 
             if let Some(existing) = handle.enable_proxy(port).await {
                 return Response::Ok {
-                    message: format!(
-                        "Proxy already listening on http://localhost:{}",
-                        existing
-                    ),
+                    message: format!("Proxy already listening on http://localhost:{}", existing),
                 };
             }
 
@@ -325,9 +321,14 @@ async fn handle_request(
             let proxy_shutdown = Arc::clone(shutdown);
             let proxy_rx = proxy_state_rx.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    super::proxy::start_proxy(listener, port, proxy_handle, proxy_rx, proxy_shutdown)
-                        .await
+                if let Err(e) = super::proxy::start_proxy(
+                    listener,
+                    port,
+                    proxy_handle,
+                    proxy_rx,
+                    proxy_shutdown,
+                )
+                .await
                 {
                     tracing::error!(error = %e, "proxy error");
                 }
