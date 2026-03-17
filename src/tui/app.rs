@@ -154,13 +154,17 @@ impl App {
     }
 
     /// Scroll up by the given number of lines. Auto-pauses if not already paused.
+    /// Clamps to the maximum scrollable range so overshooting the top is impossible.
     pub fn scroll_up_by(&mut self, lines: usize) {
         if !self.paused {
             self.paused = true;
         }
         if let Some(name) = self.selected_name().map(str::to_string) {
+            let max_offset = self
+                .line_count_for(&name)
+                .saturating_sub(self.visible_height);
             let offset = self.scroll_offsets.entry(name).or_insert(0);
-            *offset = offset.saturating_add(lines);
+            *offset = offset.saturating_add(lines).min(max_offset);
         }
     }
 
