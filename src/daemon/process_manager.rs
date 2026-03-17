@@ -334,13 +334,13 @@ impl ProcessManager {
 
     fn refresh_exit_states(&mut self) {
         for proc in self.processes.values_mut() {
-            if proc.child.is_some() && proc.exit_code.is_none() {
-                if let Some(ref mut child) = proc.child {
-                    if let Ok(Some(status)) = child.try_wait() {
-                        proc.exit_code = status.code();
-                        proc.child = None;
-                    }
-                }
+            if proc.child.is_some()
+                && proc.exit_code.is_none()
+                && let Some(ref mut child) = proc.child
+                && let Ok(Some(status)) = child.try_wait()
+            {
+                proc.exit_code = status.code();
+                proc.child = None;
             }
         }
     }

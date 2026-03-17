@@ -296,10 +296,9 @@ pub async fn status_poller(session: &str, tx: mpsc::Sender<AppEvent>) {
         ticker.tick().await;
         if let Ok(Response::Status { processes }) =
             cli::request(session, &Request::Status, false).await
+            && tx.send(AppEvent::StatusUpdate(processes)).await.is_err()
         {
-            if tx.send(AppEvent::StatusUpdate(processes)).await.is_err() {
-                break;
-            }
+            break;
         }
     }
 }

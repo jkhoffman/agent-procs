@@ -2,7 +2,7 @@
 name = "agent-procs"
 version = "0.4.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Concurrent process runner for AI agents"
 license = "MIT"
 repository = "https://github.com/jkhoffman/agent-procs"

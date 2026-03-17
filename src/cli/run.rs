@@ -7,10 +7,8 @@ pub async fn execute(
     port: Option<u16>,
     proxy: bool,
 ) -> i32 {
-    if proxy {
-        if let Some(code) = crate::cli::enable_proxy(session, None).await {
-            return code;
-        }
+    if proxy && let Some(code) = crate::cli::enable_proxy(session, None).await {
+        return code;
     }
 
     let req = Request::Run {

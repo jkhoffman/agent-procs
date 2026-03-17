@@ -169,12 +169,11 @@ async fn handle_follow_stream(
         loop {
             match output_rx.recv().await {
                 Ok(output_line) => {
-                    if !all {
-                        if let Some(ref t) = target {
-                            if output_line.process != *t {
-                                continue;
-                            }
-                        }
+                    if !all
+                        && let Some(ref t) = target
+                        && output_line.process != *t
+                    {
+                        continue;
                     }
 
                     let resp = Response::LogLine {
@@ -187,10 +186,10 @@ async fn handle_follow_stream(
                     }
 
                     line_count += 1;
-                    if let Some(max) = max_lines {
-                        if line_count >= max {
-                            return;
-                        }
+                    if let Some(max) = max_lines
+                        && line_count >= max
+                    {
+                        return;
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => {}

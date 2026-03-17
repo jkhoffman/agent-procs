@@ -243,10 +243,9 @@ impl ProcessManagerActor {
                     port: Some(p),
                     ..
                 } = resp
+                    && let Some(pp) = self.proxy_port
                 {
-                    if let Some(pp) = self.proxy_port {
-                        *url = Some(protocol::process_url(name, p, Some(pp)));
-                    }
+                    *url = Some(protocol::process_url(name, p, Some(pp)));
                 }
                 self.publish_proxy_state();
                 let _ = reply.send(resp);

@@ -33,10 +33,8 @@ pub async fn wait_for(
     };
 
     // Check if already exited before we start waiting
-    if wait_exit {
-        if let Some(exit_code) = handle.is_process_exited(target).await {
-            return Response::WaitExited { exit_code };
-        }
+    if wait_exit && let Some(exit_code) = handle.is_process_exited(target).await {
+        return Response::WaitExited { exit_code };
     }
 
     tokio::select! {
@@ -56,10 +54,10 @@ pub async fn wait_for(
                             }
                         }
                         // After each line, check if process exited (for --exit mode)
-                        if wait_exit {
-                            if let Some(exit_code) = handle.is_process_exited(target).await {
-                                return Response::WaitExited { exit_code };
-                            }
+                        if wait_exit
+                            && let Some(exit_code) = handle.is_process_exited(target).await
+                        {
+                            return Response::WaitExited { exit_code };
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {},

@@ -31,10 +31,8 @@ pub async fn execute(
 
     let enable_proxy = proxy || config.proxy.unwrap_or(false);
 
-    if enable_proxy {
-        if let Some(code) = cli::enable_proxy(session, config.proxy_port).await {
-            return code;
-        }
+    if enable_proxy && let Some(code) = cli::enable_proxy(session, config.proxy_port).await {
+        return code;
     }
 
     for group in &groups {
