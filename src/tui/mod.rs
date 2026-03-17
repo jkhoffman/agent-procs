@@ -16,7 +16,7 @@ use crate::paths;
 use crate::protocol::{Request, Response, Stream as ProtoStream};
 use app::App;
 use crossterm::{
-    event::{Event, EventStream},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -31,6 +31,7 @@ use tokio::time::{Duration, interval};
 
 enum AppEvent {
     Key(crossterm::event::KeyEvent),
+    Mouse(crossterm::event::MouseEvent),
     OutputLine {
         process: String,
         stream: ProtoStream,
@@ -56,7 +57,7 @@ pub async fn run(session: &str) -> i32 {
         return 1;
     }
     let mut stdout = io::stdout();
-    if let Err(e) = execute!(stdout, EnterAlternateScreen) {
+    if let Err(e) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
         let _ = disable_raw_mode();
         eprintln!("error: failed to enter alternate screen: {}", e);
         return 1;
@@ -66,7 +67,7 @@ pub async fn run(session: &str) -> i32 {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
         original_hook(panic_info);
     }));
 
@@ -194,6 +195,23 @@ pub async fn run(session: &str) -> i32 {
                         }
                     }
                 }
+                AppEvent::Mouse(mouse) => {
+                    use crossterm::event::{MouseButton, MouseEventKind};
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => app.scroll_up(),
+                        MouseEventKind::ScrollDown => app.scroll_down(),
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            // Click in process list (left 22 columns) to select
+                            if mouse.column < 22 {
+                                let row = mouse.row.saturating_sub(1) as usize; // -1 for border
+                                if row < app.processes.len() {
+                                    app.selected = row;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 AppEvent::OutputLine {
                     process,
                     stream,
@@ -231,7 +249,11 @@ pub async fn run(session: &str) -> i32 {
 
     // Restore terminal
     let _ = disable_raw_mode();
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    );
     0
 }
 
@@ -317,10 +339,13 @@ async fn status_poller(session: &str, tx: mpsc::Sender<AppEvent>) {
 async fn key_reader(tx: mpsc::Sender<AppEvent>) {
     let mut reader = EventStream::new();
     while let Some(Ok(event)) = reader.next().await {
-        if let Event::Key(key) = event {
-            if tx.send(AppEvent::Key(key)).await.is_err() {
-                break;
-            }
+        let app_event = match event {
+            Event::Key(key) => AppEvent::Key(key),
+            Event::Mouse(mouse) => AppEvent::Mouse(mouse),
+            _ => continue,
+        };
+        if tx.send(app_event).await.is_err() {
+            break;
         }
     }
 }
