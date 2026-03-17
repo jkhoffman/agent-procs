@@ -69,7 +69,7 @@ agent-procs down                  # stop all
 | `env` | no | Environment variables (key: value map) |
 | `ready` | no | Stdout pattern that signals the process is ready |
 | `depends_on` | no | List of process names that must be ready first |
-| `port` | no | Port number — injected as `PORT` env var |
+| `port` | no | Port number — injected as `PORT` and `HOST=127.0.0.1` env vars |
 
 **Top-level fields:**
 

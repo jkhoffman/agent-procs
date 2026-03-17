@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- MSRV raised from 1.85 to 1.88 (required by `ansi-to-tui` v7 dependencies).
+- CI tests run single-threaded to prevent env var races in path tests.
+- CI security audit job granted `checks: write` permission.
+
 ## [0.4.1] - 2026-03-17
 
 ### Fixed

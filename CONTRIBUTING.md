@@ -12,7 +12,7 @@ agree that your contributions will be licensed under the same terms.
 
 ### Prerequisites
 
-- Rust toolchain (MSRV: **1.82**)
+- Rust toolchain (MSRV: **1.88**)
 - A Unix-like OS (macOS or Linux; the daemon uses Unix domain sockets)
 
 ### Building and testing
