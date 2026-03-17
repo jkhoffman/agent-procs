@@ -1,5 +1,6 @@
 use crate::protocol::ProcessState;
 use crate::tui::app::{App, InputMode, LineSource, StreamMode};
+use ansi_to_tui::IntoText;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
@@ -65,6 +66,29 @@ fn draw_process_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(list, area);
 }
 
+/// Convert a line of text (possibly containing ANSI escape codes) to a ratatui Line.
+/// Falls back to plain text if ANSI parsing fails.
+fn ansi_line(text: &str, fallback_style: Option<Style>) -> Line<'static> {
+    match text.as_bytes().into_text() {
+        Ok(parsed) => {
+            // into_text returns a Text (multiple lines); take the first line
+            if let Some(line) = parsed.lines.into_iter().next() {
+                line
+            } else {
+                Line::from(text.to_string())
+            }
+        }
+        Err(_) => {
+            let line = Line::from(text.to_string());
+            if let Some(style) = fallback_style {
+                line.style(style)
+            } else {
+                line
+            }
+        }
+    }
+}
+
 fn draw_output(frame: &mut Frame, app: &mut App, area: Rect) {
     let name = app.selected_name().unwrap_or("(none)").to_string();
     let mode_label = match app.stream_mode {
@@ -86,37 +110,35 @@ fn draw_output(frame: &mut Frame, app: &mut App, area: Rect) {
     let filter_pat = app.filter.as_deref();
     let matches_filter = |line: &str| filter_pat.is_none_or(|p| line.contains(p));
 
-    let to_styled_line = |src: Option<LineSource>, text: &str| -> Line<'static> {
-        match src {
-            Some(LineSource::Stderr) => Line::from(Span::styled(
-                text.to_string(),
-                Style::default().fg(Color::Yellow),
-            )),
-            None => Line::from(text.to_string()).style(Style::default().fg(Color::DarkGray)),
-            _ => Line::from(text.to_string()),
-        }
-    };
+    let stderr_style = Style::default().fg(Color::Yellow);
 
     let lines: Vec<Line> = if let Some(buf) = app.buffers.get(&name) {
         match app.stream_mode {
             StreamMode::Stdout => buf
                 .stdout_lines()
                 .filter(|l| matches_filter(l))
-                .map(|l| to_styled_line(Some(LineSource::Stdout), l))
+                .map(|l| ansi_line(l, None))
                 .collect(),
             StreamMode::Stderr => buf
                 .stderr_lines()
                 .filter(|l| matches_filter(l))
-                .map(|l| to_styled_line(Some(LineSource::Stderr), l))
+                .map(|l| ansi_line(l, Some(stderr_style)))
                 .collect(),
             StreamMode::Both => buf
                 .all_lines()
                 .filter(|(_, l)| matches_filter(l))
-                .map(|(src, l)| to_styled_line(Some(src), l))
+                .map(|(src, l)| {
+                    let style = if src == LineSource::Stderr {
+                        Some(stderr_style)
+                    } else {
+                        None
+                    };
+                    ansi_line(l, style)
+                })
                 .collect(),
         }
     } else {
-        vec![to_styled_line(None, "No output yet")]
+        vec![Line::from("No output yet".to_string()).style(Style::default().fg(Color::DarkGray))]
     };
 
     // Cache visible height for scroll calculations
