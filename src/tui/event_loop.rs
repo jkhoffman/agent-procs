@@ -184,9 +184,10 @@ impl TuiEventLoop {
     }
 
     fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
+        const MOUSE_SCROLL_LINES: usize = 3;
         match mouse.kind {
-            MouseEventKind::ScrollUp => app.scroll_up(),
-            MouseEventKind::ScrollDown => app.scroll_down(),
+            MouseEventKind::ScrollUp => app.scroll_up_by(MOUSE_SCROLL_LINES),
+            MouseEventKind::ScrollDown => app.scroll_down_by(MOUSE_SCROLL_LINES),
             MouseEventKind::Down(MouseButton::Left) => {
                 if mouse.column < 22 {
                     let row = mouse.row.saturating_sub(1) as usize;

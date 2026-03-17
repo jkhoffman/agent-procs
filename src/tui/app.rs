@@ -153,28 +153,38 @@ impl App {
         }
     }
 
-    /// Scroll up by half a page. Auto-pauses if not already paused.
-    pub fn scroll_up(&mut self) {
+    /// Scroll up by the given number of lines. Auto-pauses if not already paused.
+    pub fn scroll_up_by(&mut self, lines: usize) {
         if !self.paused {
             self.paused = true;
         }
         if let Some(name) = self.selected_name().map(str::to_string) {
-            let half_page = (self.visible_height / 2).max(1);
             let offset = self.scroll_offsets.entry(name).or_insert(0);
-            *offset = offset.saturating_add(half_page);
+            *offset = offset.saturating_add(lines);
         }
     }
 
-    /// Scroll down by half a page. If we reach the bottom, unpause.
-    pub fn scroll_down(&mut self) {
+    /// Scroll up by half a page.
+    pub fn scroll_up(&mut self) {
+        let half_page = (self.visible_height / 2).max(1);
+        self.scroll_up_by(half_page);
+    }
+
+    /// Scroll down by the given number of lines. If we reach the bottom, unpause.
+    pub fn scroll_down_by(&mut self, lines: usize) {
         if let Some(name) = self.selected_name().map(str::to_string) {
-            let half_page = (self.visible_height / 2).max(1);
             let offset = self.scroll_offsets.entry(name).or_insert(0);
-            *offset = offset.saturating_sub(half_page);
+            *offset = offset.saturating_sub(lines);
             if *offset == 0 {
                 self.paused = false;
             }
         }
+    }
+
+    /// Scroll down by half a page.
+    pub fn scroll_down(&mut self) {
+        let half_page = (self.visible_height / 2).max(1);
+        self.scroll_down_by(half_page);
     }
 
     pub fn scroll_to_top(&mut self) {
