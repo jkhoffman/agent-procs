@@ -181,6 +181,11 @@ enum Commands {
         /// Shell to generate completions for
         shell: Shell,
     },
+    /// Internal: run as daemon (used by `spawn_daemon`)
+    #[command(hide = true)]
+    RunDaemon {
+        session: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -193,16 +198,14 @@ enum SessionCommands {
 
 #[tokio::main]
 async fn main() {
-    // Check for hidden internal daemon-runner flag before clap parsing.
-    // This is invoked by spawn_daemon() to start the background daemon process.
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() == 3 && args[1] == "--run-daemon" {
-        let session = &args[2];
+    let cli = Cli::parse();
+
+    // Handle internal daemon runner before session setup
+    if let Commands::RunDaemon { ref session } = cli.command {
         agent_procs::daemon::spawn::run_daemon(session).await;
         return;
     }
 
-    let cli = Cli::parse();
     let cli_session = cli.session;
     let cli_session_ref = cli_session.as_deref();
     let session = cli_session_ref.unwrap_or(agent_procs::config::DEFAULT_SESSION);
@@ -274,6 +277,8 @@ async fn main() {
             );
             0
         }
+        // RunDaemon is handled by early return above
+        Commands::RunDaemon { .. } => unreachable!(),
     };
     std::process::exit(exit_code);
 }

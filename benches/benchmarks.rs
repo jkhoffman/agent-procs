@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use agent_procs::config::{ProcessDef, ProjectConfig};
 use agent_procs::daemon::process_manager::is_valid_dns_label;
-use agent_procs::protocol::{Request, Response, Stream};
+use agent_procs::protocol::{ErrorCode, Request, Response, Stream};
 
 fn bench_config_parse(c: &mut Criterion) {
     let yaml = r"
@@ -106,7 +106,7 @@ fn bench_protocol_serde(c: &mut Criterion) {
             line: "Server listening on port 3000".into(),
         },
         Response::Error {
-            code: 1,
+            code: ErrorCode::General,
             message: "process not found".into(),
         },
     ];

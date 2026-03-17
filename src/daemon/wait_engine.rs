@@ -1,5 +1,6 @@
+use crate::daemon::actor::PmHandle;
 use crate::daemon::log_writer::OutputLine;
-use crate::protocol::Response;
+use crate::protocol::{ErrorCode, Response};
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -12,8 +13,7 @@ pub async fn wait_for(
     use_regex: bool,
     wait_exit: bool,
     timeout: Duration,
-    // Closure to check if process has already exited
-    mut check_exit: impl FnMut() -> Option<Option<i32>>,
+    handle: PmHandle,
 ) -> Response {
     let compiled_regex = if use_regex {
         match pattern {
@@ -21,7 +21,7 @@ pub async fn wait_for(
                 Ok(re) => Some(re),
                 Err(e) => {
                     return Response::Error {
-                        code: 1,
+                        code: ErrorCode::General,
                         message: format!("invalid regex: {}", e),
                     };
                 }
@@ -34,7 +34,7 @@ pub async fn wait_for(
 
     // Check if already exited before we start waiting
     if wait_exit {
-        if let Some(exit_code) = check_exit() {
+        if let Some(exit_code) = handle.is_process_exited(target).await {
             return Response::WaitExited { exit_code };
         }
     }
@@ -57,7 +57,7 @@ pub async fn wait_for(
                         }
                         // After each line, check if process exited (for --exit mode)
                         if wait_exit {
-                            if let Some(exit_code) = check_exit() {
+                            if let Some(exit_code) = handle.is_process_exited(target).await {
                                 return Response::WaitExited { exit_code };
                             }
                         }
@@ -66,11 +66,11 @@ pub async fn wait_for(
                     Err(broadcast::error::RecvError::Closed) => {
                         if wait_exit {
                             // Channel closed — process likely exited
-                            if let Some(exit_code) = check_exit() {
+                            if let Some(exit_code) = handle.is_process_exited(target).await {
                                 return Response::WaitExited { exit_code };
                             }
                         }
-                        return Response::Error { code: 1, message: "output channel closed".into() };
+                        return Response::Error { code: ErrorCode::General, message: "output channel closed".into() };
                     }
                 }
             }

@@ -7,10 +7,12 @@ fn test_output_buffer_ring_behavior() {
     for i in 0..8 {
         buf.push(LineSource::Stdout, format!("line {}", i));
     }
-    let lines = buf.stdout_lines();
-    assert_eq!(lines.len(), 5);
-    assert_eq!(lines[0], "line 3");
-    assert_eq!(lines[4], "line 7");
+    let mut lines = buf.stdout_lines();
+    assert_eq!(buf.stdout_lines().count(), 5);
+    assert_eq!(lines.next().unwrap(), "line 3");
+    // skip to last
+    let last: Vec<&str> = buf.stdout_lines().collect();
+    assert_eq!(last[4], "line 7");
 }
 
 #[test]
@@ -20,10 +22,10 @@ fn test_output_buffer_stderr() {
     buf.push(LineSource::Stderr, "err1".into());
     buf.push(LineSource::Stdout, "out2".into());
 
-    assert_eq!(buf.stdout_lines().len(), 2);
-    assert_eq!(buf.stderr_lines().len(), 1);
-    assert_eq!(buf.all_lines().len(), 3);
-    assert_eq!(buf.all_lines()[1].0, LineSource::Stderr);
+    assert_eq!(buf.stdout_lines().count(), 2);
+    assert_eq!(buf.stderr_lines().count(), 1);
+    assert_eq!(buf.all_lines().count(), 3);
+    assert_eq!(buf.all_lines().nth(1).unwrap().0, LineSource::Stderr);
 }
 
 #[test]
@@ -80,7 +82,7 @@ fn test_push_output_creates_buffer() {
     app.push_output("server", Stream::Stdout, "hello");
     assert!(app.buffers.contains_key("server"));
     let buf = &app.buffers["server"];
-    assert_eq!(buf.stdout_lines().len(), 1);
+    assert_eq!(buf.stdout_lines().count(), 1);
 }
 
 fn make_info(name: &str, state: ProcessState) -> ProcessInfo {

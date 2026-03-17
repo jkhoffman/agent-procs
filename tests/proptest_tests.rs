@@ -2,7 +2,7 @@ use proptest::prelude::*;
 use std::collections::HashMap;
 
 use agent_procs::daemon::process_manager::is_valid_dns_label;
-use agent_procs::protocol::{ProcessInfo, ProcessState, Request, Response, Stream};
+use agent_procs::protocol::{ErrorCode, ProcessInfo, ProcessState, Request, Response, Stream};
 
 // --- Strategies for generating arbitrary Request variants ---
 
@@ -85,6 +85,8 @@ fn arb_request() -> impl Strategy<Value = Request> {
             }),
         Just(Request::Shutdown),
         arb_optional_u16().prop_map(|proxy_port| Request::EnableProxy { proxy_port }),
+        any::<u32>().prop_map(|version| Request::Hello { version }),
+        Just(Request::Unknown),
     ]
 }
 
@@ -92,6 +94,10 @@ fn arb_request() -> impl Strategy<Value = Request> {
 
 fn arb_optional_i32() -> impl Strategy<Value = Option<i32>> {
     prop_oneof![Just(None), any::<i32>().prop_map(Some),]
+}
+
+fn arb_error_code() -> impl Strategy<Value = ErrorCode> {
+    prop_oneof![Just(ErrorCode::General), Just(ErrorCode::NotFound),]
 }
 
 fn arb_stream() -> impl Strategy<Value = Stream> {
@@ -159,8 +165,10 @@ fn arb_response() -> impl Strategy<Value = Response> {
         any::<String>().prop_map(|line| Response::WaitMatch { line }),
         arb_optional_i32().prop_map(|exit_code| Response::WaitExited { exit_code }),
         Just(Response::WaitTimeout),
-        (any::<i32>(), any::<String>())
+        (arb_error_code(), any::<String>())
             .prop_map(|(code, message)| Response::Error { code, message }),
+        any::<u32>().prop_map(|version| Response::Hello { version }),
+        Just(Response::Unknown),
     ]
 }
 

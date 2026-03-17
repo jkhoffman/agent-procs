@@ -83,47 +83,40 @@ fn draw_output(frame: &mut Frame, app: &mut App, area: Rect) {
         name, mode_label, pause_indicator, filter_indicator
     );
 
-    let raw_lines: Vec<(Option<LineSource>, String)> = if let Some(buf) = app.buffers.get(&name) {
+    let filter_pat = app.filter.as_deref();
+    let matches_filter = |line: &str| filter_pat.is_none_or(|p| line.contains(p));
+
+    let to_styled_line = |src: Option<LineSource>, text: &str| -> Line<'static> {
+        match src {
+            Some(LineSource::Stderr) => {
+                Line::from(Span::styled(text.to_string(), Style::default().fg(Color::Yellow)))
+            }
+            None => Line::from(text.to_string()).style(Style::default().fg(Color::DarkGray)),
+            _ => Line::from(text.to_string()),
+        }
+    };
+
+    let lines: Vec<Line> = if let Some(buf) = app.buffers.get(&name) {
         match app.stream_mode {
             StreamMode::Stdout => buf
                 .stdout_lines()
-                .into_iter()
-                .map(|l| (Some(LineSource::Stdout), l.to_string()))
+                .filter(|l| matches_filter(l))
+                .map(|l| to_styled_line(Some(LineSource::Stdout), l))
                 .collect(),
             StreamMode::Stderr => buf
                 .stderr_lines()
-                .into_iter()
-                .map(|l| (Some(LineSource::Stderr), l.to_string()))
+                .filter(|l| matches_filter(l))
+                .map(|l| to_styled_line(Some(LineSource::Stderr), l))
                 .collect(),
             StreamMode::Both => buf
                 .all_lines()
-                .into_iter()
-                .map(|(src, l)| (Some(src), l.to_string()))
+                .filter(|(_, l)| matches_filter(l))
+                .map(|(src, l)| to_styled_line(Some(src), l))
                 .collect(),
         }
     } else {
-        vec![(None, "No output yet".to_string())]
+        vec![to_styled_line(None, "No output yet")]
     };
-
-    // Apply text filter
-    let filtered: Vec<&(Option<LineSource>, String)> = match &app.filter {
-        Some(pat) => raw_lines
-            .iter()
-            .filter(|(_, l)| l.contains(pat.as_str()))
-            .collect(),
-        None => raw_lines.iter().collect(),
-    };
-
-    let lines: Vec<Line> = filtered
-        .iter()
-        .map(|(src, l)| match src {
-            Some(LineSource::Stderr) => {
-                Line::from(Span::styled(l.clone(), Style::default().fg(Color::Yellow)))
-            }
-            None => Line::from(l.clone()).style(Style::default().fg(Color::DarkGray)),
-            _ => Line::from(l.clone()),
-        })
-        .collect();
 
     // Cache visible height for scroll calculations
     let visible_height = area.height.saturating_sub(2) as usize; // -2 for borders

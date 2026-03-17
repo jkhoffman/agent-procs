@@ -54,7 +54,7 @@ fn test_wait_request_with_pattern() {
 #[test]
 fn test_error_response() {
     let resp = Response::Error {
-        code: 2,
+        code: ErrorCode::NotFound,
         message: "process not found: foo".into(),
     };
     let json = serde_json::to_string(&resp).unwrap();

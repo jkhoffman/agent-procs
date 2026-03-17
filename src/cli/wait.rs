@@ -15,33 +15,23 @@ pub async fn execute(
         exit,
         timeout_secs: timeout,
     };
-    match crate::cli::request(session, &req, false).await {
-        Ok(Response::WaitMatch { line }) => {
+    crate::cli::request_and_handle(session, &req, false, |resp| match resp {
+        Response::WaitMatch { line } => {
             println!("{}", line);
-            0
+            Some(0)
         }
-        Ok(Response::WaitExited { exit_code }) => {
+        Response::WaitExited { exit_code } => {
             match exit_code {
                 Some(code) => println!("exited with code {}", code),
                 None => println!("exited by signal"),
             }
-            0
+            Some(0)
         }
-        Ok(Response::WaitTimeout) => {
+        Response::WaitTimeout => {
             eprintln!("timeout");
-            1
+            Some(1)
         }
-        Ok(Response::Error { code, message }) => {
-            eprintln!("error: {}", message);
-            code
-        }
-        Ok(_) => {
-            eprintln!("unexpected response");
-            1
-        }
-        Err(e) => {
-            eprintln!("error: {}", e);
-            1
-        }
-    }
+        _ => None,
+    })
+    .await
 }

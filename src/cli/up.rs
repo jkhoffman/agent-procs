@@ -99,7 +99,7 @@ pub async fn execute(
                 },
                 Ok(Response::Error { code, message }) => {
                     eprintln!("error starting {}: {}", name, message);
-                    return *code;
+                    return code.exit_code();
                 }
                 _ => return 1,
             }

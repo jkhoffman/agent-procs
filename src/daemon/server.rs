@@ -1,5 +1,6 @@
+use crate::daemon::actor::{PmHandle, ProcessManagerActor, ProxyState};
 use crate::daemon::wait_engine;
-use crate::protocol::{self, Request, Response};
+use crate::protocol::{self, ErrorCode, Request, Response, PROTOCOL_VERSION};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,24 +8,17 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
-use tokio::sync::broadcast;
-
-use super::process_manager::ProcessManager;
+use tokio::sync::{broadcast, watch};
 
 /// Maximum concurrent client connections.  Prevents accidental fork-bomb
 /// loops where each connection spawns more connections.
 const MAX_CONCURRENT_CONNECTIONS: usize = 64;
 
-pub struct DaemonState {
-    pub process_manager: ProcessManager,
-    pub proxy_port: Option<u16>,
-}
-
 pub async fn run(session: &str, socket_path: &Path) {
-    let state = Arc::new(Mutex::new(DaemonState {
-        process_manager: ProcessManager::new(session),
-        proxy_port: None,
-    }));
+    let (handle, proxy_state_rx, actor) = ProcessManagerActor::new(session);
+
+    // Spawn the actor loop
+    tokio::spawn(actor.run());
 
     let listener = match UnixListener::bind(socket_path) {
         Ok(l) => l,
@@ -63,9 +57,10 @@ pub async fn run(session: &str, socket_path: &Path) {
             continue;
         }
 
-        let state = Arc::clone(&state);
+        let handle = handle.clone();
         let shutdown = Arc::clone(&shutdown);
         let conn_counter = Arc::clone(&active_connections);
+        let proxy_state_rx = proxy_state_rx.clone();
         tokio::spawn(async move {
             let _guard = ConnectionGuard(conn_counter);
             let (reader, writer) = stream.into_split();
@@ -81,7 +76,7 @@ pub async fn run(session: &str, socket_path: &Path) {
                     Ok(0) | Err(_) => break, // EOF or error
                     Ok(n) if n >= protocol::MAX_MESSAGE_SIZE => {
                         let resp = Response::Error {
-                            code: 1,
+                            code: ErrorCode::General,
                             message: format!(
                                 "message too large: {} bytes (max {})",
                                 n,
@@ -102,7 +97,7 @@ pub async fn run(session: &str, socket_path: &Path) {
                     Ok(r) => r,
                     Err(e) => {
                         let resp = Response::Error {
-                            code: 1,
+                            code: ErrorCode::General,
                             message: format!("invalid request: {}", e),
                         };
                         let _ = send_response(&writer, &resp).await;
@@ -120,7 +115,7 @@ pub async fn run(session: &str, socket_path: &Path) {
                     ..
                 } = request
                 {
-                    let output_rx = state.lock().await.process_manager.output_tx.subscribe();
+                    let output_rx = handle.subscribe().await;
                     let max_lines = lines;
                     let target_filter = target.clone();
                     let show_all = all;
@@ -139,7 +134,8 @@ pub async fn run(session: &str, socket_path: &Path) {
 
                 let is_shutdown = matches!(request, Request::Shutdown);
 
-                let response = handle_request(&state, &shutdown, request).await;
+                let response =
+                    handle_request(&handle, &shutdown, &proxy_state_rx, request).await;
                 let _ = send_response(&writer, &response).await;
 
                 if is_shutdown {
@@ -218,8 +214,9 @@ async fn handle_follow_stream(
 }
 
 async fn handle_request(
-    state: &Arc<Mutex<DaemonState>>,
+    handle: &PmHandle,
     shutdown: &Arc<tokio::sync::Notify>,
+    proxy_state_rx: &watch::Receiver<ProxyState>,
     request: Request,
 ) -> Response {
     match request {
@@ -229,59 +226,11 @@ async fn handle_request(
             cwd,
             env,
             port,
-        } => {
-            let mut s = state.lock().await;
-            let proxy_port = s.proxy_port;
-            let mut resp = s
-                .process_manager
-                .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port)
-                .await;
-            drop(s);
-            if let Response::RunOk {
-                ref name,
-                ref mut url,
-                port: Some(_),
-                ..
-            } = resp
-            {
-                if let Some(pp) = proxy_port {
-                    *url = Some(format!("http://{}.localhost:{}", name, pp));
-                }
-            }
-            resp
-        }
-        Request::Stop { target } => {
-            state
-                .lock()
-                .await
-                .process_manager
-                .stop_process(&target)
-                .await
-        }
-        Request::StopAll => state.lock().await.process_manager.stop_all().await,
-        Request::Restart { target } => {
-            state
-                .lock()
-                .await
-                .process_manager
-                .restart_process(&target)
-                .await
-        }
-        Request::Status => {
-            let mut s = state.lock().await;
-            let proxy_port = s.proxy_port;
-            let mut resp = s.process_manager.status();
-            if let Some(pp) = proxy_port {
-                if let Response::Status { ref mut processes } = resp {
-                    for p in processes.iter_mut() {
-                        if p.port.is_some() {
-                            p.url = Some(format!("http://{}.localhost:{}", p.name, pp));
-                        }
-                    }
-                }
-            }
-            resp
-        }
+        } => handle.spawn_process(command, name, cwd, env, port).await,
+        Request::Stop { target } => handle.stop_process(&target).await,
+        Request::StopAll => handle.stop_all().await,
+        Request::Restart { target } => handle.restart_process(&target).await,
+        Request::Status => handle.status().await,
         Request::Wait {
             target,
             until,
@@ -290,34 +239,28 @@ async fn handle_request(
             timeout_secs,
         } => {
             // Check process exists
-            let session_name = {
-                let s = state.lock().await;
-                if !s.process_manager.has_process(&target) {
-                    return Response::Error {
-                        code: 2,
-                        message: format!("process not found: {}", target),
-                    };
-                }
-                s.process_manager.session_name().to_string()
-            };
+            if !handle.has_process(&target).await {
+                return Response::Error {
+                    code: ErrorCode::NotFound,
+                    message: format!("process not found: {}", target),
+                };
+            }
+
+            let session_name = handle.session_name().await;
 
             // Subscribe BEFORE checking historical logs to avoid missing lines
-            // emitted between the historical scan and the subscription.
-            let output_rx = state.lock().await.process_manager.output_tx.subscribe();
+            let output_rx = handle.subscribe().await;
 
-            // Check historical log output for the pattern (fixes race where
-            // fast processes emit the pattern before Wait subscribes).
+            // Check historical log output for the pattern
             if let Some(ref pattern) = until {
                 let log_path =
                     crate::paths::log_dir(&session_name).join(format!("{}.stdout", target));
                 if let Ok(content) = std::fs::read_to_string(&log_path) {
-                    // Compile regex once for the entire scan
                     let compiled_re = if regex {
                         regex::Regex::new(pattern).ok()
                     } else {
                         None
                     };
-                    // Single-pass: find returns the first match (no need for any + find)
                     let matched_line = content.lines().find(|line| {
                         if let Some(ref re) = compiled_re {
                             re.is_match(line)
@@ -333,8 +276,6 @@ async fn handle_request(
                 }
             }
             let timeout = Duration::from_secs(timeout_secs.unwrap_or(30));
-            let state_clone = Arc::clone(state);
-            let target_clone = target.clone();
             wait_engine::wait_for(
                 output_rx,
                 &target,
@@ -342,70 +283,51 @@ async fn handle_request(
                 regex,
                 exit,
                 timeout,
-                move || {
-                    // This is called synchronously from the wait loop
-                    // We can't hold the lock across the whole wait, so we check briefly
-                    let state = state_clone.clone();
-                    let target = target_clone.clone();
-                    // Use try_lock to avoid deadlock
-                    match state.try_lock() {
-                        Ok(mut s) => s.process_manager.is_process_exited(&target),
-                        Err(_) => None,
-                    }
-                },
+                handle.clone(),
             )
             .await
         }
-        Request::Logs { follow: false, .. } => {
-            // Non-follow logs are read directly from files by the CLI — no daemon involvement needed
-            Response::Error {
-                code: 1,
-                message: "non-follow logs are read directly from disk by CLI".into(),
-            }
-        }
-        Request::Logs { follow: true, .. } => {
-            // Handled separately in connection loop (needs streaming)
-            Response::Error {
-                code: 1,
-                message: "follow requests handled in connection loop".into(),
-            }
-        }
+        Request::Logs { follow: false, .. } => Response::Error {
+            code: ErrorCode::General,
+            message: "non-follow logs are read directly from disk by CLI".into(),
+        },
+        Request::Logs { follow: true, .. } => Response::Error {
+            code: ErrorCode::General,
+            message: "follow requests handled in connection loop".into(),
+        },
         Request::Shutdown => {
-            let _ = state.lock().await.process_manager.stop_all().await;
+            let _ = handle.stop_all().await;
             Response::Ok {
                 message: "daemon shutting down".into(),
             }
         }
         Request::EnableProxy { proxy_port } => {
-            let mut s = state.lock().await;
-            if let Some(existing_port) = s.proxy_port {
-                return Response::Ok {
-                    message: format!(
-                        "Proxy already listening on http://localhost:{}",
-                        existing_port
-                    ),
-                };
-            }
-
             let (listener, port) = match super::proxy::bind_proxy_port(proxy_port) {
                 Ok(pair) => pair,
                 Err(e) => {
                     return Response::Error {
-                        code: 1,
+                        code: ErrorCode::General,
                         message: e.to_string(),
                     };
                 }
             };
 
-            s.proxy_port = Some(port);
-            s.process_manager.enable_proxy();
-            drop(s);
+            if let Some(existing) = handle.enable_proxy(port).await {
+                return Response::Ok {
+                    message: format!(
+                        "Proxy already listening on http://localhost:{}",
+                        existing
+                    ),
+                };
+            }
 
-            let proxy_state = Arc::clone(state);
+            let proxy_handle = handle.clone();
             let proxy_shutdown = Arc::clone(shutdown);
+            let proxy_rx = proxy_state_rx.clone();
             tokio::spawn(async move {
                 if let Err(e) =
-                    super::proxy::start_proxy(listener, port, proxy_state, proxy_shutdown).await
+                    super::proxy::start_proxy(listener, port, proxy_handle, proxy_rx, proxy_shutdown)
+                        .await
                 {
                     tracing::error!(error = %e, "proxy error");
                 }
@@ -415,6 +337,13 @@ async fn handle_request(
                 message: format!("Proxy listening on http://localhost:{}", port),
             }
         }
+        Request::Hello { .. } => Response::Hello {
+            version: PROTOCOL_VERSION,
+        },
+        Request::Unknown => Response::Error {
+            code: ErrorCode::General,
+            message: "unknown request type".into(),
+        },
     }
 }
 

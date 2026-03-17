@@ -2,14 +2,14 @@ use crate::protocol::{ProcessState, Request, Response};
 
 pub async fn execute(session: &str, json: bool) -> i32 {
     let req = Request::Status;
-    match crate::cli::request(session, &req, false).await {
-        Ok(Response::Status { processes }) => {
+    crate::cli::request_and_handle(session, &req, false, |resp| match resp {
+        Response::Status { processes } => {
             if json {
                 match serde_json::to_string_pretty(&processes) {
                     Ok(json) => println!("{}", json),
                     Err(e) => {
                         eprintln!("error: failed to serialize status: {}", e);
-                        return 1;
+                        return Some(1);
                     }
                 }
             } else {
@@ -46,14 +46,11 @@ pub async fn execute(session: &str, json: bool) -> i32 {
                     }
                 }
             }
-            0
+            Some(0)
         }
-        Ok(Response::Error { code, message }) => {
-            eprintln!("error: {}", message);
-            code
-        }
-        _ => 1,
-    }
+        _ => None,
+    })
+    .await
 }
 
 fn format_uptime(secs: u64) -> String {

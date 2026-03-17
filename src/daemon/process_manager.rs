@@ -1,7 +1,7 @@
 use crate::daemon::log_writer::{self, OutputLine};
-use crate::error::ProxyError;
+use crate::daemon::port_allocator::PortAllocator;
 use crate::paths;
-use crate::protocol::{ProcessInfo, ProcessState, Response, Stream as ProtoStream};
+use crate::protocol::{ErrorCode, ProcessInfo, ProcessState, Response, Stream as ProtoStream, process_url};
 use crate::session::IdCounter;
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -10,8 +10,6 @@ use tokio::process::{Child, Command};
 use tokio::sync::broadcast;
 
 const DEFAULT_MAX_LOG_BYTES: u64 = 50 * 1024 * 1024; // 50MB
-const AUTO_PORT_MIN: u16 = 4000;
-const AUTO_PORT_MAX: u16 = 4999;
 
 /// Returns true if `name` is a valid DNS label: 1-63 lowercase alphanumeric/hyphen
 /// chars, not starting or ending with a hyphen.
@@ -45,8 +43,7 @@ pub struct ProcessManager {
     id_counter: IdCounter,
     session: String,
     pub output_tx: broadcast::Sender<OutputLine>,
-    proxy_enabled: bool,
-    next_auto_port: u16,
+    port_allocator: PortAllocator,
 }
 
 impl ProcessManager {
@@ -57,38 +54,8 @@ impl ProcessManager {
             id_counter: IdCounter::new(),
             session: session.to_string(),
             output_tx,
-            proxy_enabled: false,
-            next_auto_port: AUTO_PORT_MIN,
+            port_allocator: PortAllocator::new(),
         }
-    }
-
-    fn auto_assign_port(&mut self) -> Result<u16, ProxyError> {
-        let start = self.next_auto_port;
-        let assigned: std::collections::HashSet<u16> =
-            self.processes.values().filter_map(|p| p.port).collect();
-        let range_size = (AUTO_PORT_MAX - AUTO_PORT_MIN + 1) as usize;
-
-        for i in 0..range_size {
-            let candidate = AUTO_PORT_MIN
-                + (((self.next_auto_port - AUTO_PORT_MIN) as usize + i) % range_size) as u16;
-            if assigned.contains(&candidate) {
-                continue;
-            }
-            // Bind-test: if we can bind, the port is free (listener drops immediately)
-            if std::net::TcpListener::bind(("127.0.0.1", candidate)).is_ok() {
-                self.next_auto_port = if candidate >= AUTO_PORT_MAX {
-                    AUTO_PORT_MIN
-                } else {
-                    candidate + 1
-                };
-                return Ok(candidate);
-            }
-        }
-        Err(ProxyError::NoFreeAutoPort {
-            min: AUTO_PORT_MIN,
-            max: AUTO_PORT_MAX,
-            start,
-        })
     }
 
     #[allow(unsafe_code, clippy::unused_async)]
@@ -106,15 +73,15 @@ impl ProcessManager {
         // Reject names that could cause path traversal in log files
         if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains('\0') {
             return Response::Error {
-                code: 1,
+                code: ErrorCode::General,
                 message: format!("invalid process name: {}", name),
             };
         }
 
         // When proxy is active, names must be valid DNS labels for subdomain routing
-        if self.proxy_enabled && !is_valid_dns_label(&name) {
+        if self.port_allocator.is_proxy_enabled() && !is_valid_dns_label(&name) {
             return Response::Error {
-                code: 1,
+                code: ErrorCode::General,
                 message: format!(
                     "invalid process name for proxy: '{}' (must be lowercase alphanumeric/hyphens, max 63 chars)",
                     name
@@ -125,12 +92,14 @@ impl ProcessManager {
         // Resolve the port: use explicit port, auto-assign if proxy is enabled, or None
         let resolved_port = if let Some(p) = port {
             Some(p)
-        } else if self.proxy_enabled {
-            match self.auto_assign_port() {
+        } else if self.port_allocator.is_proxy_enabled() {
+            let assigned: std::collections::HashSet<u16> =
+                self.processes.values().filter_map(|p| p.port).collect();
+            match self.port_allocator.auto_assign_port(&assigned) {
                 Ok(p) => Some(p),
                 Err(e) => {
                     return Response::Error {
-                        code: 1,
+                        code: ErrorCode::General,
                         message: e.to_string(),
                     };
                 }
@@ -141,7 +110,7 @@ impl ProcessManager {
 
         if self.processes.contains_key(&name) {
             return Response::Error {
-                code: 1,
+                code: ErrorCode::General,
                 message: format!("process already exists: {}", name),
             };
         }
@@ -186,7 +155,7 @@ impl ProcessManager {
             Ok(c) => c,
             Err(e) => {
                 return Response::Error {
-                    code: 1,
+                    code: ErrorCode::General,
                     message: format!("failed to spawn: {}", e),
                 };
             }
@@ -207,6 +176,7 @@ impl ProcessManager {
                     ProtoStream::Stdout,
                     tx,
                     DEFAULT_MAX_LOG_BYTES,
+                    log_writer::DEFAULT_MAX_ROTATED_FILES,
                 )
                 .await;
             });
@@ -223,6 +193,7 @@ impl ProcessManager {
                     ProtoStream::Stderr,
                     tx,
                     DEFAULT_MAX_LOG_BYTES,
+                    log_writer::DEFAULT_MAX_ROTATED_FILES,
                 )
                 .await;
             });
@@ -244,7 +215,7 @@ impl ProcessManager {
             },
         );
 
-        let url = resolved_port.map(|p| format!("http://127.0.0.1:{}", p));
+        let url = resolved_port.map(|p| process_url(&name, p, None));
         Response::RunOk {
             name,
             id,
@@ -259,7 +230,7 @@ impl ProcessManager {
             Some(p) => p,
             None => {
                 return Response::Error {
-                    code: 2,
+                    code: ErrorCode::NotFound,
                     message: format!("process not found: {}", target),
                 };
             }
@@ -323,7 +294,7 @@ impl ProcessManager {
             ),
             None => {
                 return Response::Error {
-                    code: 2,
+                    code: ErrorCode::NotFound,
                     message: format!("process not found: {}", target),
                 };
             }
@@ -336,7 +307,7 @@ impl ProcessManager {
     }
 
     pub fn enable_proxy(&mut self) {
-        self.proxy_enabled = true;
+        self.port_allocator.enable_proxy();
     }
 
     pub fn status(&mut self) -> Response {
@@ -380,10 +351,18 @@ impl ProcessManager {
         self.find(target).is_some()
     }
 
-    pub fn get_process_port(&self, name: &str) -> Option<u16> {
+    /// Returns a map of running process names to their assigned ports.
+    pub fn running_ports(&self) -> HashMap<String, u16> {
         self.processes
-            .get(name)
-            .and_then(|p| if p.child.is_some() { p.port } else { None })
+            .iter()
+            .filter_map(|(name, p)| {
+                if p.child.is_some() {
+                    p.port.map(|port| (name.clone(), port))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Non-mutating status snapshot for use by the proxy status page.
@@ -415,7 +394,7 @@ impl ProcessManager {
                 },
                 command: p.command.clone(),
                 port: p.port,
-                url: p.port.map(|port| format!("http://127.0.0.1:{}", port)),
+                url: p.port.map(|port| process_url(&p.name, port, None)),
             })
             .collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));

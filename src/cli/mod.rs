@@ -85,13 +85,43 @@ pub async fn enable_proxy(session: &str, proxy_port: Option<u16>) -> Option<i32>
         }
         Ok(Response::Error { code, message }) => {
             eprintln!("error enabling proxy: {}", message);
-            Some(code)
+            Some(code.exit_code())
         }
         Err(e) => {
             eprintln!("error enabling proxy: {}", e);
             Some(1)
         }
         _ => None,
+    }
+}
+
+/// Send a request and dispatch the response through a user-supplied callback.
+///
+/// Handles the `Error` branch centrally (prints the message and returns the
+/// exit code).  `on_success` receives any other response and returns
+/// `Some(exit_code)` to finish or `None` for an unexpected-response fallback.
+pub async fn request_and_handle<F>(
+    session: &str,
+    req: &Request,
+    auto_spawn: bool,
+    on_success: F,
+) -> i32
+where
+    F: FnOnce(Response) -> Option<i32>,
+{
+    match request(session, req, auto_spawn).await {
+        Ok(Response::Error { code, message }) => {
+            eprintln!("error: {}", message);
+            code.exit_code()
+        }
+        Ok(resp) => on_success(resp).unwrap_or_else(|| {
+            eprintln!("unexpected response");
+            1
+        }),
+        Err(e) => {
+            eprintln!("error: {}", e);
+            1
+        }
     }
 }
 

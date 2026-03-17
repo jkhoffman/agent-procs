@@ -76,7 +76,7 @@ async fn execute_follow(
     {
         Ok(Response::Error { code, message }) => {
             eprintln!("error: {}", message);
-            code
+            code.exit_code()
         }
         Ok(_) => 0,
         Err(e) => {
@@ -115,7 +115,7 @@ fn show_all_logs(log_dir: &std::path::Path, tail: usize) -> i32 {
     0
 }
 
-fn tail_file(path: &std::path::Path, n: usize) -> std::io::Result<Vec<String>> {
+pub(crate) fn tail_file(path: &std::path::Path, n: usize) -> std::io::Result<Vec<String>> {
     let file = File::open(path)?;
     // Use a ring buffer to keep only the last N lines in memory
     let mut ring: std::collections::VecDeque<String> = std::collections::VecDeque::with_capacity(n);

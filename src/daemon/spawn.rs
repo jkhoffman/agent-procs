@@ -31,7 +31,7 @@ pub fn spawn_daemon(session: &str) -> std::io::Result<()> {
 
     // Use double-fork via shell to fully detach
     let child = Command::new(&exe)
-        .args(["--run-daemon", session])
+        .args(["run-daemon", session])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

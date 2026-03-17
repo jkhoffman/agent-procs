@@ -4,30 +4,24 @@ pub async fn execute(session: &str, target: &str) -> i32 {
     let req = Request::Stop {
         target: target.into(),
     };
-    match crate::cli::request(session, &req, false).await {
-        Ok(Response::Ok { message }) => {
+    crate::cli::request_and_handle(session, &req, false, |resp| match resp {
+        Response::Ok { message } => {
             println!("{}", message);
-            0
+            Some(0)
         }
-        Ok(Response::Error { code, message }) => {
-            eprintln!("error: {}", message);
-            code
-        }
-        _ => 1,
-    }
+        _ => None,
+    })
+    .await
 }
 
 pub async fn execute_all(session: &str) -> i32 {
     let req = Request::StopAll;
-    match crate::cli::request(session, &req, false).await {
-        Ok(Response::Ok { message }) => {
+    crate::cli::request_and_handle(session, &req, false, |resp| match resp {
+        Response::Ok { message } => {
             println!("{}", message);
-            0
+            Some(0)
         }
-        Ok(Response::Error { code, message }) => {
-            eprintln!("error: {}", message);
-            code
-        }
-        _ => 1,
-    }
+        _ => None,
+    })
+    .await
 }

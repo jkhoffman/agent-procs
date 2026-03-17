@@ -3,6 +3,9 @@ use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast;
 
+/// Default number of rotated log files to keep.
+pub const DEFAULT_MAX_ROTATED_FILES: u32 = 5;
+
 /// A line of output from a child process.
 #[derive(Debug, Clone)]
 pub struct OutputLine {
@@ -20,6 +23,7 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
     stream: ProtoStream,
     tx: broadcast::Sender<OutputLine>,
     max_bytes: u64,
+    max_rotated_files: u32,
 ) {
     let mut lines = BufReader::new(reader).lines();
     let mut file = match tokio::fs::File::create(log_path).await {
@@ -35,13 +39,9 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
         // Write to log file (with rotation check)
         let line_bytes = line.len() as u64 + 1; // +1 for newline
         if max_bytes > 0 && bytes_written + line_bytes > max_bytes {
-            // Rotate: close current, rename to .1, start fresh
+            // Rotate: cascade .N-1 → .N, then current → .1, delete excess
             drop(file);
-            let rotated = log_path.with_extension(format!(
-                "{}.1",
-                log_path.extension().unwrap_or_default().to_string_lossy()
-            ));
-            let _ = tokio::fs::rename(log_path, &rotated).await;
+            rotate_log_files(log_path, max_rotated_files).await;
             file = match tokio::fs::File::create(log_path).await {
                 Ok(f) => f,
                 Err(e) => {
@@ -64,4 +64,29 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
             line,
         });
     }
+}
+
+/// Cascade-rotate log files: shift .N-1 → .N down to .1 → .2,
+/// then rename current → .1, and delete files beyond `max_rotated_files`.
+async fn rotate_log_files(log_path: &Path, max_rotated_files: u32) {
+    let ext = log_path
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    // Shift existing rotated files: .N-1 → .N (starting from highest to avoid overwriting)
+    for i in (1..max_rotated_files).rev() {
+        let from = log_path.with_extension(format!("{}.{}", ext, i));
+        let to = log_path.with_extension(format!("{}.{}", ext, i + 1));
+        let _ = tokio::fs::rename(&from, &to).await;
+    }
+
+    // Rename current → .1
+    let rotated_1 = log_path.with_extension(format!("{}.1", ext));
+    let _ = tokio::fs::rename(log_path, &rotated_1).await;
+
+    // Delete excess files beyond max_rotated_files
+    let excess = log_path.with_extension(format!("{}.{}", ext, max_rotated_files + 1));
+    let _ = tokio::fs::remove_file(&excess).await;
 }

@@ -14,6 +14,53 @@ use std::collections::HashMap;
 /// Provides defense-in-depth against runaway reads on the Unix socket.
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1 MiB
 
+/// Current protocol version.  Bumped when breaking changes are introduced.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Typed error codes for [`Response::Error`].
+///
+/// Wire-compatible with the previous `i32` representation: serializes as
+/// `1` (`General`) or `2` (`NotFound`).  Unknown codes from future versions
+/// map to `General`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "i32", from = "i32")]
+pub enum ErrorCode {
+    General = 1,
+    NotFound = 2,
+}
+
+impl ErrorCode {
+    pub fn exit_code(self) -> i32 {
+        self as i32
+    }
+}
+
+impl From<i32> for ErrorCode {
+    fn from(v: i32) -> Self {
+        match v {
+            2 => Self::NotFound,
+            _ => Self::General,
+        }
+    }
+}
+
+impl From<ErrorCode> for i32 {
+    fn from(c: ErrorCode) -> i32 {
+        c as i32
+    }
+}
+
+/// Build the canonical URL for a managed process.
+///
+/// When `proxy_port` is `Some`, returns the subdomain-based proxy URL;
+/// otherwise returns a direct `127.0.0.1` URL.
+pub fn process_url(name: &str, port: u16, proxy_port: Option<u16>) -> String {
+    match proxy_port {
+        Some(pp) => format!("http://{}.localhost:{}", name, pp),
+        None => format!("http://127.0.0.1:{}", port),
+    }
+}
+
 /// A client-to-daemon request, serialized as tagged JSON.
 ///
 /// # Examples
@@ -71,6 +118,12 @@ pub enum Request {
         #[serde(default)]
         proxy_port: Option<u16>,
     },
+    Hello {
+        version: u32,
+    },
+    /// Catch-all for unknown request types from future protocol versions.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A daemon-to-client response, serialized as tagged JSON.
@@ -118,9 +171,15 @@ pub enum Response {
     },
     WaitTimeout,
     Error {
-        code: i32,
+        code: ErrorCode,
         message: String,
     },
+    Hello {
+        version: u32,
+    },
+    /// Catch-all for unknown response types from future protocol versions.
+    #[serde(other)]
+    Unknown,
 }
 
 #[must_use]
@@ -195,6 +254,10 @@ mod tests {
             Request::EnableProxy {
                 proxy_port: Some(8080),
             },
+            Request::Hello {
+                version: PROTOCOL_VERSION,
+            },
+            Request::Unknown,
         ];
 
         for req in &requests {
@@ -230,9 +293,13 @@ mod tests {
             Response::WaitExited { exit_code: Some(0) },
             Response::WaitTimeout,
             Response::Error {
-                code: 1,
+                code: ErrorCode::General,
                 message: "oops".into(),
             },
+            Response::Hello {
+                version: PROTOCOL_VERSION,
+            },
+            Response::Unknown,
         ];
 
         for resp in &responses {
@@ -295,5 +362,54 @@ mod tests {
         let enable_proxy = Request::EnableProxy { proxy_port: None };
         let json = serde_json::to_string(&enable_proxy).unwrap();
         assert!(json.contains("\"type\":\"EnableProxy\""));
+
+        let hello = Request::Hello { version: 1 };
+        let json = serde_json::to_string(&hello).unwrap();
+        assert!(json.contains("\"type\":\"Hello\""));
+    }
+
+    #[test]
+    fn test_unknown_request_deserialization() {
+        // Unknown types should deserialize to Unknown
+        let json = r#"{"type":"FutureRequestType","data":"something"}"#;
+        let parsed: Request = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed, Request::Unknown);
+    }
+
+    #[test]
+    fn test_unknown_response_deserialization() {
+        let json = r#"{"type":"FutureResponseType","data":"something"}"#;
+        let parsed: Response = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed, Response::Unknown);
+    }
+
+    #[test]
+    fn test_error_code_wire_format() {
+        let resp = Response::Error {
+            code: ErrorCode::NotFound,
+            message: "not found".into(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"code\":2"));
+
+        // i32 codes from old clients deserialize correctly
+        let json = r#"{"type":"Error","code":2,"message":"not found"}"#;
+        let parsed: Response = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            parsed,
+            Response::Error {
+                code: ErrorCode::NotFound,
+                message: "not found".into(),
+            }
+        );
+
+        // Unknown codes map to General
+        let json = r#"{"type":"Error","code":99,"message":"future error"}"#;
+        let parsed: Response = serde_json::from_str(json).unwrap();
+        if let Response::Error { code, .. } = parsed {
+            assert_eq!(code, ErrorCode::General);
+        } else {
+            panic!("expected Error");
+        }
     }
 }

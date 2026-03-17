@@ -20,27 +20,17 @@ pub async fn execute(
         env: None,
         port,
     };
-    match crate::cli::request(session, &req, true).await {
-        Ok(Response::RunOk {
+    crate::cli::request_and_handle(session, &req, true, |resp| match resp {
+        Response::RunOk {
             name, id, pid, url, ..
-        }) => {
+        } => {
             match url {
                 Some(u) => println!("{} (id: {}, pid: {}, {})", name, id, pid, u),
                 None => println!("{} (id: {}, pid: {})", name, id, pid),
             }
-            0
+            Some(0)
         }
-        Ok(Response::Error { code, message }) => {
-            eprintln!("error: {}", message);
-            code
-        }
-        Ok(_) => {
-            eprintln!("unexpected response");
-            1
-        }
-        Err(e) => {
-            eprintln!("error: {}", e);
-            1
-        }
-    }
+        _ => None,
+    })
+    .await
 }

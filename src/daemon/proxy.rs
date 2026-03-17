@@ -1,4 +1,4 @@
-use crate::daemon::server::DaemonState;
+use crate::daemon::actor::{PmHandle, ProxyState};
 use crate::error::ProxyError;
 use crate::protocol::{ProcessState, Response};
 use http_body_util::{BodyExt, Full};
@@ -11,7 +11,7 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::watch;
 
 type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
 
@@ -76,7 +76,8 @@ type HttpClient = Client<hyper_util::client::legacy::connect::HttpConnector, Inc
 pub async fn start_proxy(
     std_listener: std::net::TcpListener,
     proxy_port: u16,
-    state: Arc<Mutex<DaemonState>>,
+    handle: PmHandle,
+    proxy_state_rx: watch::Receiver<ProxyState>,
     shutdown: Arc<tokio::sync::Notify>,
 ) -> std::io::Result<()> {
     std_listener.set_nonblocking(true)?;
@@ -99,7 +100,8 @@ pub async fn start_proxy(
             }
         };
 
-        let state = Arc::clone(&state);
+        let handle = handle.clone();
+        let proxy_state_rx = proxy_state_rx.clone();
         let client = client.clone();
         let pp = proxy_port;
 
@@ -107,9 +109,10 @@ pub async fn start_proxy(
             let io = TokioIo::new(stream);
             let client = client.clone();
             let svc = service_fn(move |req: Request<Incoming>| {
-                let state = Arc::clone(&state);
+                let handle = handle.clone();
+                let proxy_state_rx = proxy_state_rx.clone();
                 let client = client.clone();
-                async move { handle_proxy_request(req, state, client, pp).await }
+                async move { handle_proxy_request(req, &handle, &proxy_state_rx, client, pp).await }
             });
 
             if let Err(e) = http1::Builder::new()
@@ -129,7 +132,8 @@ pub async fn start_proxy(
 /// Handle an incoming proxy request by routing it to the appropriate backend process.
 async fn handle_proxy_request(
     req: Request<Incoming>,
-    state: Arc<Mutex<DaemonState>>,
+    handle: &PmHandle,
+    proxy_state_rx: &watch::Receiver<ProxyState>,
     client: HttpClient,
     proxy_port: u16,
 ) -> Result<HyperResponse<BoxBody>, hyper::Error> {
@@ -146,34 +150,23 @@ async fn handle_proxy_request(
         Some(name) => name,
         None => {
             // No subdomain -> serve status page
-            let s = state.lock().await;
-            return Ok(status_page(&s, proxy_port));
+            return Ok(status_page(handle, proxy_port).await);
         }
     };
 
-    // Single lock acquisition for both port lookup and existence check
-    let (backend_port, process_exists) = {
-        let s = state.lock().await;
-        (
-            s.process_manager.get_process_port(&process_name),
-            s.process_manager.has_process(&process_name),
-        )
+    // Lock-free port lookup via watch channel
+    let backend_port = {
+        let state = proxy_state_rx.borrow();
+        state.port_map.get(&process_name).copied()
     };
 
     let backend_port = match backend_port {
         Some(port) => port,
         None => {
-            let msg = if process_exists {
-                format!(
-                    "502 Bad Gateway: process '{}' is running but has no port assigned",
-                    process_name
-                )
-            } else {
-                format!(
-                    "502 Bad Gateway: no process named '{}'. Visit http://localhost:{} to see available routes.",
-                    process_name, proxy_port
-                )
-            };
+            let msg = format!(
+                "502 Bad Gateway: no running process named '{}' with a port. Visit http://localhost:{} to see available routes.",
+                process_name, proxy_port
+            );
             return Ok(HyperResponse::builder()
                 .status(StatusCode::BAD_GATEWAY)
                 .body(text_body(msg))
@@ -230,8 +223,8 @@ fn text_body(s: String) -> BoxBody {
 }
 
 /// Generate a plain-text status page listing all routes.
-fn status_page(state: &DaemonState, proxy_port: u16) -> HyperResponse<BoxBody> {
-    let resp = state.process_manager.status_snapshot();
+async fn status_page(handle: &PmHandle, proxy_port: u16) -> HyperResponse<BoxBody> {
+    let resp = handle.status_snapshot().await;
     let mut body = format!("agent-procs proxy on port {}\n\n", proxy_port);
 
     if let Response::Status { processes } = resp {

@@ -38,27 +38,24 @@ impl OutputBuffer {
         self.lines.push_back((source, line));
     }
 
-    pub fn stdout_lines(&self) -> Vec<&str> {
+    pub fn stdout_lines(&self) -> impl Iterator<Item = &str> {
         self.lines
             .iter()
             .filter(|(src, _)| *src == LineSource::Stdout)
             .map(|(_, s)| s.as_str())
-            .collect()
     }
 
-    pub fn stderr_lines(&self) -> Vec<&str> {
+    pub fn stderr_lines(&self) -> impl Iterator<Item = &str> {
         self.lines
             .iter()
             .filter(|(src, _)| *src == LineSource::Stderr)
             .map(|(_, s)| s.as_str())
-            .collect()
     }
 
-    pub fn all_lines(&self) -> Vec<(LineSource, &str)> {
+    pub fn all_lines(&self) -> impl Iterator<Item = (LineSource, &str)> {
         self.lines
             .iter()
             .map(|(src, s)| (*src, s.as_str()))
-            .collect()
     }
 }
 
@@ -204,14 +201,12 @@ impl App {
         let Some(buf) = self.buffers.get(name) else {
             return 0;
         };
-        let lines = match self.stream_mode {
-            StreamMode::Stdout => buf.stdout_lines(),
-            StreamMode::Stderr => buf.stderr_lines(),
-            StreamMode::Both => buf.all_lines().into_iter().map(|(_, l)| l).collect(),
-        };
-        match &self.filter {
-            Some(pat) => lines.iter().filter(|l| l.contains(pat.as_str())).count(),
-            None => lines.len(),
+        let pat = self.filter.as_deref();
+        let matches = |line: &str| pat.is_none_or(|p| line.contains(p));
+        match self.stream_mode {
+            StreamMode::Stdout => buf.stdout_lines().filter(|l| matches(l)).count(),
+            StreamMode::Stderr => buf.stderr_lines().filter(|l| matches(l)).count(),
+            StreamMode::Both => buf.all_lines().filter(|(_, l)| matches(l)).count(),
         }
     }
 
@@ -357,9 +352,8 @@ mod tests {
         let mut app = App::new();
         app.push_output("web", Stream::Stdout, "hello world");
         let buf = app.buffers.get("web").unwrap();
-        let lines = buf.stdout_lines();
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0], "hello world");
+        assert_eq!(buf.stdout_lines().count(), 1);
+        assert_eq!(buf.stdout_lines().next().unwrap(), "hello world");
     }
 
     #[test]
