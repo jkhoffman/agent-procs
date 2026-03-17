@@ -171,7 +171,7 @@ agent-procs ui                           # current session
 agent-procs ui --session myproject       # specific session
 ```
 
-Keybindings: `j/k` or arrows to select process, `e` cycle stdout/stderr/both, `Space` pause, `u/d` or `PgUp/PgDn` scroll (auto-pauses), `g/G` top/bottom, `/` filter output, `Esc` clear filter, `r` restart, `x` stop, `X` stop-all, `q` quit, `Q` quit + stop all.
+Keybindings: `j/k` or arrows to select process, `e` cycle stdout/stderr/both, `Space` pause, `u/d` or `PgUp/PgDn` scroll (auto-pauses), `g/G` top/bottom, `/` filter output, `Esc` clear filter, `r` restart, `x` stop, `X` stop-all, `q` quit, `Q` down (stop all + shutdown). Mouse: scroll wheel scrolls output, left-click selects a process.
 
 ## Common recipes
 

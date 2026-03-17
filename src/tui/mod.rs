@@ -242,9 +242,9 @@ pub async fn run(session: &str) -> i32 {
         }
     }
 
-    // Stop all if requested
+    // Shut down daemon if requested (Q = down: stop all + shutdown)
     if app.stop_all_on_quit {
-        let _ = cli::request(session, &Request::StopAll, false).await;
+        let _ = cli::request(session, &Request::Shutdown, false).await;
     }
 
     // Restore terminal

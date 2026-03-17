@@ -154,7 +154,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     } else if app.paused {
         " PgUp/u scroll up  PgDn/d scroll down  g top  G bottom  Space unpause  / filter  Esc clear filter ".to_string()
     } else {
-        " ↑↓ select  r restart  x stop  X stop-all  e stream  Space pause  u/d scroll  / filter  q quit  Q quit+stop ".to_string()
+        " ↑↓ select  r restart  x stop  X stop-all  e stream  Space pause  u/d scroll  / filter  q quit  Q down ".to_string()
     };
 
     let counts = format!(
