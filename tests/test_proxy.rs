@@ -185,14 +185,14 @@ fn test_proxy_routes_request() {
         ])
         .output();
 
-    if let Ok(curl_output) = curl_result {
-        if curl_output.status.success() {
-            let body = String::from_utf8_lossy(&curl_output.stdout);
-            assert!(!body.is_empty(), "expected non-empty response from proxy");
-        }
-        // If curl exits with error (e.g. backend not ready yet), the proxy itself
-        // started correctly — we already verified that above.
+    if let Ok(curl_output) = curl_result
+        && curl_output.status.success()
+    {
+        let body = String::from_utf8_lossy(&curl_output.stdout);
+        assert!(!body.is_empty(), "expected non-empty response from proxy");
     }
+    // If curl exits with error (e.g. backend not ready yet), the proxy itself
+    // started correctly — we already verified that above.
 
     let _ = Command::cargo_bin("agent-procs")
         .unwrap()
