@@ -3,6 +3,9 @@ use crate::daemon::log_writer::OutputLine;
 use crate::protocol::{ErrorCode, Response};
 use std::time::Duration;
 use tokio::sync::broadcast;
+use tokio::time::{self, MissedTickBehavior};
+
+const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Wait for a condition on a process's output.
 /// Returns a Response indicating match, exit, or timeout.
@@ -37,38 +40,45 @@ pub async fn wait_for(
         return Response::WaitExited { exit_code };
     }
 
+    let mut exit_poll = time::interval(EXIT_POLL_INTERVAL);
+    exit_poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    exit_poll.tick().await;
+
     tokio::select! {
         result = async {
             loop {
-                match output_rx.recv().await {
-                    Ok(line) => {
-                        if line.process != target { continue; }
-                        if let Some(pat) = pattern {
-                            let matched = if let Some(ref re) = compiled_regex {
-                                re.is_match(&line.line)
-                            } else {
-                                line.line.contains(pat)
-                            };
-                            if matched {
-                                return Response::WaitMatch { line: line.line };
+                tokio::select! {
+                    recv = output_rx.recv() => match recv {
+                        Ok(line) => {
+                            if line.process != target { continue; }
+                            if let Some(pat) = pattern {
+                                let matched = if let Some(ref re) = compiled_regex {
+                                    re.is_match(&line.line)
+                                } else {
+                                    line.line.contains(pat)
+                                };
+                                if matched {
+                                    return Response::WaitMatch { line: line.line };
+                                }
                             }
                         }
-                        // After each line, check if process exited (for --exit mode)
-                        if wait_exit
-                            && let Some(exit_code) = handle.is_process_exited(target).await
-                        {
-                            return Response::WaitExited { exit_code };
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {},
-                    Err(broadcast::error::RecvError::Closed) => {
-                        if wait_exit {
-                            // Channel closed — process likely exited
-                            if let Some(exit_code) = handle.is_process_exited(target).await {
+                        Err(broadcast::error::RecvError::Lagged(_)) => {},
+                        Err(broadcast::error::RecvError::Closed) => {
+                            if wait_exit
+                                && let Some(exit_code) = handle.is_process_exited(target).await
+                            {
                                 return Response::WaitExited { exit_code };
                             }
+                            return Response::Error {
+                                code: ErrorCode::General,
+                                message: "output channel closed".into(),
+                            };
                         }
-                        return Response::Error { code: ErrorCode::General, message: "output channel closed".into() };
+                    },
+                    _ = exit_poll.tick(), if wait_exit => {
+                        if let Some(exit_code) = handle.is_process_exited(target).await {
+                            return Response::WaitExited { exit_code };
+                        }
                     }
                 }
             }

@@ -1,5 +1,4 @@
 mod helpers;
-use assert_cmd::Command;
 use helpers::TestContext;
 use std::thread;
 use std::time::Duration;
@@ -7,10 +6,9 @@ use std::time::Duration;
 #[test]
 fn test_logs_tail() {
     let ctx = TestContext::new("test-logs-tail");
-    ctx.set_env();
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -24,16 +22,16 @@ fn test_logs_tail() {
 
     thread::sleep(Duration::from_millis(500));
 
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "logs", "echoer", "--tail", "10"])
         .output()
         .unwrap();
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("hello world"));
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }
@@ -41,10 +39,9 @@ fn test_logs_tail() {
 #[test]
 fn test_logs_all_interleaved() {
     let ctx = TestContext::new("test-logs-all");
-    ctx.set_env();
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -55,8 +52,8 @@ fn test_logs_all_interleaved() {
         ])
         .output()
         .unwrap();
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -70,8 +67,8 @@ fn test_logs_all_interleaved() {
 
     thread::sleep(Duration::from_millis(500));
 
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "logs", "--all", "--tail", "10"])
         .output()
         .unwrap();
@@ -80,8 +77,8 @@ fn test_logs_all_interleaved() {
     assert!(stdout.contains("[alpha]"));
     assert!(stdout.contains("[beta]"));
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }

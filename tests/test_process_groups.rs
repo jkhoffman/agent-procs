@@ -1,5 +1,4 @@
 mod helpers;
-use assert_cmd::Command;
 use helpers::TestContext;
 use std::thread;
 use std::time::Duration;
@@ -9,7 +8,6 @@ use std::time::Duration;
 #[test]
 fn test_stop_kills_child_processes() {
     let ctx = TestContext::new("t-pgid");
-    ctx.set_env();
 
     // Spawn a process that starts a subprocess which writes its PID to a file
     let pid_file = ctx.state_dir.path().join("child.pid");
@@ -19,8 +17,8 @@ fn test_stop_kills_child_processes() {
         pid_file_str
     );
 
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "run", &cmd, "--name", "parent"])
         .output()
         .unwrap();
@@ -43,8 +41,8 @@ fn test_stop_kills_child_processes() {
     );
 
     // Stop the parent
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop", "parent"])
         .output()
         .unwrap();
@@ -59,8 +57,8 @@ fn test_stop_kills_child_processes() {
         "child process should be dead after stop"
     );
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }

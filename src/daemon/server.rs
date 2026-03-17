@@ -14,19 +14,16 @@ use tokio::sync::{broadcast, watch};
 /// loops where each connection spawns more connections.
 const MAX_CONCURRENT_CONNECTIONS: usize = 64;
 
-pub async fn run(session: &str, socket_path: &Path) {
+pub async fn run(session: &str, socket_path: &Path) -> std::io::Result<()> {
     let (handle, proxy_state_rx, actor) = ProcessManagerActor::new(session);
 
     // Spawn the actor loop
     tokio::spawn(actor.run());
 
-    let listener = match UnixListener::bind(socket_path) {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!(path = %socket_path.display(), error = %e, "failed to bind socket");
-            return;
-        }
-    };
+    let listener = UnixListener::bind(socket_path).map_err(|e| {
+        tracing::error!(path = %socket_path.display(), error = %e, "failed to bind socket");
+        e
+    })?;
 
     // Shutdown signal: set to true when a Shutdown request is handled
     let shutdown = Arc::new(tokio::sync::Notify::new());
@@ -110,6 +107,7 @@ pub async fn run(session: &str, socket_path: &Path) {
                     follow: true,
                     ref target,
                     all,
+                    stderr,
                     timeout_secs,
                     lines,
                     ..
@@ -125,6 +123,7 @@ pub async fn run(session: &str, socket_path: &Path) {
                         output_rx,
                         target_filter,
                         show_all,
+                        stderr,
                         timeout_secs,
                         max_lines,
                     )
@@ -144,6 +143,8 @@ pub async fn run(session: &str, socket_path: &Path) {
             }
         });
     }
+
+    Ok(())
 }
 
 /// RAII guard that decrements the active connection counter when dropped.
@@ -160,6 +161,7 @@ async fn handle_follow_stream(
     mut output_rx: broadcast::Receiver<super::log_writer::OutputLine>,
     target: Option<String>,
     all: bool,
+    stderr_only: bool,
     timeout_secs: Option<u64>,
     max_lines: Option<usize>,
 ) {
@@ -172,6 +174,15 @@ async fn handle_follow_stream(
                     if !all
                         && let Some(ref t) = target
                         && output_line.process != *t
+                    {
+                        continue;
+                    }
+                    if stderr_only && output_line.stream != protocol::Stream::Stderr {
+                        continue;
+                    }
+                    if !stderr_only
+                        && (!all || target.is_some())
+                        && output_line.stream != protocol::Stream::Stdout
                     {
                         continue;
                     }

@@ -1,5 +1,4 @@
 mod helpers;
-use assert_cmd::Command;
 use helpers::TestContext;
 use std::io::Write;
 use std::time::Duration;
@@ -9,10 +8,9 @@ use std::time::Duration;
 #[test]
 fn test_run_with_port_shows_url() {
     let ctx = TestContext::new("t-port");
-    ctx.set_env();
 
-    let run_output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let run_output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -43,8 +41,8 @@ fn test_run_with_port_shows_url() {
     );
 
     // status should show the URL column
-    let status_output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let status_output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "status"])
         .output()
         .unwrap();
@@ -57,8 +55,8 @@ fn test_run_with_port_shows_url() {
     );
 
     // status --json should contain port and url fields
-    let json_output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let json_output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "status", "--json"])
         .output()
         .unwrap();
@@ -75,8 +73,8 @@ fn test_run_with_port_shows_url() {
         json_str
     );
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }
@@ -85,10 +83,9 @@ fn test_run_with_port_shows_url() {
 #[test]
 fn test_run_without_port_has_no_url() {
     let ctx = TestContext::new("t-noport");
-    ctx.set_env();
 
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "run", "sleep 60", "--name", "bg"])
         .output()
         .unwrap();
@@ -106,8 +103,8 @@ fn test_run_without_port_has_no_url() {
         stdout
     );
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }
@@ -116,11 +113,10 @@ fn test_run_without_port_has_no_url() {
 #[test]
 fn test_proxy_routes_request() {
     let ctx = TestContext::new("t-proxy-route");
-    ctx.set_env();
 
     // Start a python HTTP server with --proxy enabled
-    let run_output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let run_output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -162,8 +158,8 @@ fn test_proxy_routes_request() {
     let proxy_port = match proxy_port {
         Some(p) => p,
         None => {
-            let _ = Command::cargo_bin("agent-procs")
-                .unwrap()
+            let _ = ctx
+                .cmd()
                 .args(["--session", &ctx.session, "stop-all"])
                 .output();
             panic!("could not parse proxy port from stderr: {}", stderr);
@@ -194,8 +190,8 @@ fn test_proxy_routes_request() {
     // If curl exits with error (e.g. backend not ready yet), the proxy itself
     // started correctly — we already verified that above.
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }
@@ -204,7 +200,6 @@ fn test_proxy_routes_request() {
 #[test]
 fn test_up_with_proxy_config() {
     let ctx = TestContext::new("t-proxy-up");
-    ctx.set_env();
 
     let config_dir = tempfile::TempDir::new().unwrap();
     let config_path = config_dir.path().join("agent-procs.yaml");
@@ -215,8 +210,8 @@ fn test_up_with_proxy_config() {
     )
     .unwrap();
 
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -250,8 +245,8 @@ fn test_up_with_proxy_config() {
     );
 
     // status should show URL for echo-srv (proxy URL form: echo-srv.localhost:{proxy_port})
-    let status_output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let status_output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "status"])
         .output()
         .unwrap();
@@ -263,8 +258,69 @@ fn test_up_with_proxy_config() {
         status_stdout
     );
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
-        .args(["--session", &ctx.session, "down"])
+    let _ = ctx.cmd().args(["--session", &ctx.session, "down"]).output();
+}
+
+#[test]
+fn test_proxy_drops_route_after_process_exit() {
+    let ctx = TestContext::new("t-proxy-exit");
+
+    let run_output = ctx
+        .cmd()
+        .args([
+            "--session",
+            &ctx.session,
+            "run",
+            "python3 -c \"import http.server, socketserver, threading; httpd = socketserver.TCPServer(('127.0.0.1', 4510), http.server.SimpleHTTPRequestHandler); threading.Timer(1.0, httpd.shutdown).start(); httpd.serve_forever()\"",
+            "--name",
+            "web",
+            "--port",
+            "4510",
+            "--proxy",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        run_output.status.success(),
+        "run failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&run_output.stderr);
+    let proxy_port = {
+        let prefix = "http://localhost:";
+        stderr.find(prefix).and_then(|idx| {
+            let after = &stderr[idx + prefix.len()..];
+            let port_str: String = after.chars().take_while(char::is_ascii_digit).collect();
+            port_str.parse::<u16>().ok()
+        })
+    }
+    .expect("could not parse proxy port");
+
+    std::thread::sleep(Duration::from_secs(2));
+
+    let curl_output = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "--max-time",
+            "5",
+            "-H",
+            &format!("Host: web.localhost:{}", proxy_port),
+            &format!("http://127.0.0.1:{}/", proxy_port),
+        ])
+        .output()
+        .unwrap();
+    assert!(curl_output.status.success());
+    let body = String::from_utf8_lossy(&curl_output.stdout);
+    assert!(
+        body.contains("no running process named 'web'"),
+        "expected stale route to be removed, got: {}",
+        body
+    );
+
+    let _ = ctx
+        .cmd()
+        .args(["--session", &ctx.session, "stop-all"])
         .output();
 }

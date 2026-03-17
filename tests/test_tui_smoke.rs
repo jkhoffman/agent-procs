@@ -1,5 +1,4 @@
 mod helpers;
-use assert_cmd::Command;
 use helpers::TestContext;
 use std::time::Duration;
 
@@ -9,18 +8,17 @@ use std::time::Duration;
 #[test]
 fn test_ui_starts_and_exits() {
     let ctx = TestContext::new("t-ui-smoke");
-    ctx.set_env();
 
     // Start a process so the daemon exists
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "run", "sleep 60", "--name", "bg"])
         .output()
         .unwrap();
 
     // Launch the TUI with a very short timeout — it will be killed
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "ui"])
         .timeout(Duration::from_secs(3))
         .output();
@@ -43,8 +41,8 @@ fn test_ui_starts_and_exits() {
         }
     }
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }

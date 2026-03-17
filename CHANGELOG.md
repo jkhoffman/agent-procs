@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-17
+
+### Fixed
+
+- `wait --exit` now detects quiet process exits instead of timing out while
+  waiting for a log line.
+- Proxy route state and auto-assigned port tracking now refresh when processes
+  exit naturally, preventing stale routes from lingering.
+- `logs --follow` now honors `--stderr` and replays `--tail` output before live
+  streaming instead of silently ignoring those flags.
+- Daemon startup failures now report early-exit diagnostics instead of only
+  surfacing a generic 5-second timeout.
+- Integration tests now isolate `XDG_STATE_HOME` per spawned CLI process so the
+  suite is stable under the default parallel `cargo test` settings.
+
 ## [0.5.0] - 2026-03-17
 
 ### Added

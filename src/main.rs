@@ -200,8 +200,7 @@ async fn main() {
 
     // Handle internal daemon runner before session setup
     if let Commands::RunDaemon { ref session } = cli.command {
-        agent_procs::daemon::spawn::run_daemon(session).await;
-        return;
+        std::process::exit(agent_procs::daemon::spawn::run_daemon(session).await);
     }
 
     let cli_session = cli.session;

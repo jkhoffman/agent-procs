@@ -1,7 +1,7 @@
 use crate::paths;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, ExitStatus};
 
 /// Spawns the daemon as a detached background process by re-executing the
 /// current binary with the `--run-daemon SESSION` internal flag.
@@ -29,24 +29,35 @@ pub fn spawn_daemon(session: &str) -> std::io::Result<()> {
     // Re-exec self with a hidden flag to run as daemon
     let exe = std::env::current_exe()?;
 
-    // Use double-fork via shell to fully detach
-    let child = Command::new(&exe)
+    // Spawn a background child and wait until it is actually listening.
+    let mut child = Command::new(&exe)
         .args(["run-daemon", session])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
 
-    // Detach: we don't want to wait for it (let OS reap it as orphan → init)
-    // Drop the child handle without waiting — it becomes a daemon
+    let daemon_log_path = state.join("daemon.log");
+    let result = wait_for_daemon_ready(&mut child, &pid_path, &socket_path, &daemon_log_path);
     drop(child);
-
-    wait_for_daemon_ready(&pid_path, &socket_path)
+    result
 }
 
-fn wait_for_daemon_ready(pid_path: &Path, socket_path: &Path) -> std::io::Result<()> {
+fn wait_for_daemon_ready(
+    child: &mut Child,
+    pid_path: &Path,
+    socket_path: &Path,
+    daemon_log_path: &Path,
+) -> std::io::Result<()> {
     // Poll for socket existence, then try to connect to verify it's accepting
     for _ in 0..100 {
+        if let Some(status) = child.try_wait()? {
+            return Err(std::io::Error::other(format!(
+                "daemon exited early ({}){}",
+                format_exit_status(status),
+                daemon_log_hint(daemon_log_path)
+            )));
+        }
         if pid_path.exists() && socket_path.exists() {
             // Try connecting to confirm the server is actually listening
             if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
@@ -57,13 +68,16 @@ fn wait_for_daemon_ready(pid_path: &Path, socket_path: &Path) -> std::io::Result
     }
     Err(std::io::Error::new(
         std::io::ErrorKind::TimedOut,
-        "daemon did not start within 5s",
+        format!(
+            "daemon did not start within 5s{}",
+            daemon_log_hint(daemon_log_path)
+        ),
     ))
 }
 
 /// Entry point called when running as daemon (via --run-daemon flag in main.rs).
 /// This runs in a fresh process with no tokio runtime yet.
-pub async fn run_daemon(session: &str) {
+pub async fn run_daemon(session: &str) -> i32 {
     // Initialize file-based tracing subscriber before any other operations.
     // The daemon's stdout/stderr are redirected to /dev/null, so structured
     // logging to a file is the only way to capture diagnostics.
@@ -106,8 +120,32 @@ pub async fn run_daemon(session: &str) {
         let _ = writeln!(f, "{}", std::process::id());
     }
 
-    super::server::run(session, &socket_path).await;
+    let exit_code = match super::server::run(session, &socket_path).await {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::error!(error = %e, "daemon server exited with error");
+            1
+        }
+    };
 
     let _ = std::fs::remove_file(&socket_path);
     let _ = std::fs::remove_file(&pid_path);
+    exit_code
+}
+
+fn format_exit_status(status: ExitStatus) -> String {
+    match status.code() {
+        Some(code) => format!("exit code {}", code),
+        None => "terminated by signal".to_string(),
+    }
+}
+
+fn daemon_log_hint(daemon_log_path: &Path) -> String {
+    let Ok(contents) = fs::read_to_string(daemon_log_path) else {
+        return String::new();
+    };
+    let Some(line) = contents.lines().rev().find(|line| !line.trim().is_empty()) else {
+        return String::new();
+    };
+    format!("; {}", line.trim())
 }

@@ -1,16 +1,14 @@
 mod helpers;
-use assert_cmd::Command;
 use helpers::TestContext;
 use std::time::Duration;
 
 #[test]
 fn test_follow_captures_output() {
     let ctx = TestContext::new("t-follow");
-    ctx.set_env();
 
     // Start a process that waits 1s then outputs lines (gives --follow time to subscribe)
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -23,8 +21,8 @@ fn test_follow_captures_output() {
         .unwrap();
 
     // Follow with a line limit
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -52,8 +50,8 @@ fn test_follow_captures_output() {
         line_count, stdout
     );
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }
@@ -61,11 +59,10 @@ fn test_follow_captures_output() {
 #[test]
 fn test_follow_timeout() {
     let ctx = TestContext::new("t-fol-tmo");
-    ctx.set_env();
 
     // Start a process that waits 1s then outputs a line (gives --follow time to subscribe)
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -78,8 +75,8 @@ fn test_follow_timeout() {
         .unwrap();
 
     // Follow with short timeout — should get the initial line then timeout
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -96,8 +93,8 @@ fn test_follow_timeout() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("started"));
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }
@@ -105,36 +102,35 @@ fn test_follow_timeout() {
 #[test]
 fn test_follow_all_processes() {
     let ctx = TestContext::new("t-fol-all");
-    ctx.set_env();
 
-    // Both processes wait 1s before output so --follow can subscribe first
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    // Both processes wait 2s before output so --follow can subscribe first.
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
             "run",
-            "sleep 1 && echo alpha-out && sleep 60",
+            "sleep 2 && echo alpha-out && sleep 60",
             "--name",
             "alpha",
         ])
         .output()
         .unwrap();
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
             "run",
-            "sleep 1 && echo beta-out && sleep 60",
+            "sleep 2 && echo beta-out && sleep 60",
             "--name",
             "beta",
         ])
         .output()
         .unwrap();
 
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -154,8 +150,118 @@ fn test_follow_all_processes() {
     assert!(stdout.contains("[alpha]") || stdout.contains("alpha-out"));
     assert!(stdout.contains("[beta]") || stdout.contains("beta-out"));
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
+        .args(["--session", &ctx.session, "stop-all"])
+        .output();
+}
+
+#[test]
+fn test_follow_stderr_only() {
+    let ctx = TestContext::new("t-fol-stderr");
+
+    let _ = ctx
+        .cmd()
+        .args([
+            "--session",
+            &ctx.session,
+            "run",
+            "sleep 1 && echo stdout-line && echo stderr-line >&2 && sleep 60",
+            "--name",
+            "mixed",
+        ])
+        .output()
+        .unwrap();
+
+    let output = ctx
+        .cmd()
+        .args([
+            "--session",
+            &ctx.session,
+            "logs",
+            "mixed",
+            "--follow",
+            "--stderr",
+            "--lines",
+            "1",
+            "--timeout",
+            "10",
+        ])
+        .timeout(Duration::from_secs(15))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("stderr-line"));
+    assert!(!stdout.contains("stdout-line"));
+
+    let _ = ctx
+        .cmd()
+        .args(["--session", &ctx.session, "stop-all"])
+        .output();
+}
+
+#[test]
+fn test_follow_replays_tail_before_streaming() {
+    let ctx = TestContext::new("t-fol-tail");
+
+    let _ = ctx
+        .cmd()
+        .args([
+            "--session",
+            &ctx.session,
+            "run",
+            "echo prelude && sleep 1 && echo after && sleep 60",
+            "--name",
+            "tailer",
+        ])
+        .output()
+        .unwrap();
+
+    let mut prelude_ready = false;
+    for _ in 0..20 {
+        let output = ctx
+            .cmd()
+            .args(["--session", &ctx.session, "logs", "tailer", "--tail", "1"])
+            .output()
+            .unwrap();
+        if output.status.success() && String::from_utf8_lossy(&output.stdout).contains("prelude") {
+            prelude_ready = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(prelude_ready, "prelude line never reached disk");
+
+    let output = ctx
+        .cmd()
+        .args([
+            "--session",
+            &ctx.session,
+            "logs",
+            "tailer",
+            "--follow",
+            "--tail",
+            "1",
+            "--lines",
+            "1",
+            "--timeout",
+            "10",
+        ])
+        .timeout(Duration::from_secs(15))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("prelude"),
+        "tail replay missing: {}",
+        stdout
+    );
+    assert!(stdout.contains("after"), "live follow missing: {}", stdout);
+
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }

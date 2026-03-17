@@ -97,8 +97,12 @@ impl ProcessManager {
         let resolved_port = if let Some(p) = port {
             Some(p)
         } else if self.port_allocator.is_proxy_enabled() {
-            let assigned: std::collections::HashSet<u16> =
-                self.processes.values().filter_map(|p| p.port).collect();
+            let assigned: std::collections::HashSet<u16> = self
+                .processes
+                .values()
+                .filter(|p| p.child.is_some())
+                .filter_map(|p| p.port)
+                .collect();
             match self.port_allocator.auto_assign_port(&assigned) {
                 Ok(p) => Some(p),
                 Err(e) => {
@@ -341,7 +345,8 @@ impl ProcessManager {
         })
     }
 
-    fn refresh_exit_states(&mut self) {
+    pub(crate) fn refresh_exit_states(&mut self) -> bool {
+        let mut changed = false;
         for proc in self.processes.values_mut() {
             if proc.child.is_some()
                 && proc.exit_code.is_none()
@@ -350,8 +355,10 @@ impl ProcessManager {
             {
                 proc.exit_code = status.code();
                 proc.child = None;
+                changed = true;
             }
         }
+        changed
     }
 
     pub fn session_name(&self) -> &str {

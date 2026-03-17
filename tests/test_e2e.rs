@@ -1,16 +1,14 @@
 mod helpers;
-use assert_cmd::Command;
 use helpers::TestContext;
 use std::time::Duration;
 
 #[test]
 fn test_agent_workflow() {
     let ctx = TestContext::new("test-e2e");
-    ctx.set_env();
 
     // 1. Start a "server"
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -24,8 +22,8 @@ fn test_agent_workflow() {
     assert!(output.status.success());
 
     // 2. Wait for ready
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -47,8 +45,8 @@ fn test_agent_workflow() {
     );
 
     // 3. Check status (JSON)
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "status", "--json"])
         .output()
         .unwrap();
@@ -61,8 +59,8 @@ fn test_agent_workflow() {
     );
 
     // 4. Read logs
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "logs", "server", "--tail", "5"])
         .output()
         .unwrap();
@@ -70,8 +68,8 @@ fn test_agent_workflow() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Server ready"));
 
     // 5. Stop
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output()
         .unwrap();

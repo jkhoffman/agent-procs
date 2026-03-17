@@ -1,3 +1,4 @@
+use assert_cmd::Command;
 use tempfile::TempDir;
 
 pub struct TestContext {
@@ -15,9 +16,10 @@ impl TestContext {
         }
     }
 
-    pub fn set_env(&self) {
-        // SAFETY: Test code runs single-threaded per test; no concurrent env reads.
-        unsafe { std::env::set_var("XDG_STATE_HOME", self.state_dir.path()) };
+    pub fn cmd(&self) -> Command {
+        let mut cmd = Command::cargo_bin("agent-procs").unwrap();
+        cmd.env("XDG_STATE_HOME", self.state_dir.path());
+        cmd
     }
 }
 

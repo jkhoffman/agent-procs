@@ -3,6 +3,9 @@ use crate::daemon::process_manager::ProcessManager;
 use crate::protocol::{self, ErrorCode, Response};
 use std::collections::HashMap;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use tokio::time::{self, Duration, MissedTickBehavior};
+
+const EXIT_REFRESH_INTERVAL: Duration = Duration::from_millis(200);
 
 /// State published via the watch channel for lock-free proxy reads.
 #[derive(Debug, Clone, PartialEq)]
@@ -218,8 +221,21 @@ impl ProcessManagerActor {
 
     /// Run the actor loop until all senders are dropped.
     pub async fn run(mut self) {
-        while let Some(cmd) = self.rx.recv().await {
-            self.handle_command(cmd).await;
+        let mut exit_refresh = time::interval(EXIT_REFRESH_INTERVAL);
+        exit_refresh.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                cmd = self.rx.recv() => match cmd {
+                    Some(cmd) => self.handle_command(cmd).await,
+                    None => break,
+                },
+                _ = exit_refresh.tick() => {
+                    if self.pm.refresh_exit_states() {
+                        self.publish_proxy_state();
+                    }
+                }
+            }
         }
     }
 
@@ -298,13 +314,19 @@ impl ProcessManagerActor {
 
     /// Build a status response with proxy URL rewriting applied.
     fn build_status(&mut self) -> Response {
-        let mut resp = self.pm.status();
+        if self.pm.refresh_exit_states() {
+            self.publish_proxy_state();
+        }
+        let mut resp = self.pm.status_snapshot();
         self.rewrite_urls(&mut resp);
         resp
     }
 
     /// Build a status snapshot with proxy URL rewriting applied.
-    fn build_status_snapshot(&self) -> Response {
+    fn build_status_snapshot(&mut self) -> Response {
+        if self.pm.refresh_exit_states() {
+            self.publish_proxy_state();
+        }
         let mut resp = self.pm.status_snapshot();
         self.rewrite_urls(&mut resp);
         resp

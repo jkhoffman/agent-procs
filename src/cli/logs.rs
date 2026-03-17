@@ -15,14 +15,14 @@ pub async fn execute(
     lines: Option<usize>,
 ) -> i32 {
     if follow {
-        return execute_follow(session, target, all, timeout, lines).await;
+        return execute_follow(session, target, tail, stderr, all, timeout, lines).await;
     }
 
     // Non-follow: read from disk (unchanged)
     let log_dir = paths::log_dir(session);
 
     if all || target.is_none() {
-        return show_all_logs(&log_dir, tail);
+        return show_all_logs(&log_dir, tail, stderr);
     }
 
     let target = target.unwrap();
@@ -50,15 +50,21 @@ pub async fn execute(
 async fn execute_follow(
     session: &str,
     target: Option<&str>,
+    tail: usize,
+    stderr: bool,
     all: bool,
     timeout: Option<u64>,
     lines: Option<usize>,
 ) -> i32 {
+    if let Some(code) = replay_follow_tail(session, target, tail, stderr, all) {
+        return code;
+    }
+
     let req = Request::Logs {
         target: target.map(std::string::ToString::to_string),
         tail: 0,
         follow: true,
-        stderr: false,
+        stderr,
         all: all || target.is_none(),
         timeout_secs: timeout.or(Some(30)), // CLI default; TUI passes None for infinite
         lines,
@@ -86,7 +92,43 @@ async fn execute_follow(
     }
 }
 
-fn show_all_logs(log_dir: &std::path::Path, tail: usize) -> i32 {
+fn replay_follow_tail(
+    session: &str,
+    target: Option<&str>,
+    tail: usize,
+    stderr: bool,
+    all: bool,
+) -> Option<i32> {
+    if tail == 0 {
+        return None;
+    }
+
+    let log_dir = paths::log_dir(session);
+    if all || target.is_none() {
+        let code = show_all_logs(&log_dir, tail, stderr);
+        return if code == 0 { None } else { Some(code) };
+    }
+
+    let target = target.expect("target should exist when not following all logs");
+    let stream = if stderr { "stderr" } else { "stdout" };
+    let path = log_dir.join(format!("{}.{}", target, stream));
+
+    match tail_file(&path, tail) {
+        Ok(lines) => {
+            for line in lines {
+                println!("{}", line);
+            }
+            None
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            eprintln!("error reading logs: {}", e);
+            Some(1)
+        }
+    }
+}
+
+fn show_all_logs(log_dir: &std::path::Path, tail: usize, stderr: bool) -> i32 {
     let entries = match std::fs::read_dir(log_dir) {
         Ok(e) => e,
         Err(e) => {
@@ -95,13 +137,14 @@ fn show_all_logs(log_dir: &std::path::Path, tail: usize) -> i32 {
         }
     };
 
+    let suffix = if stderr { ".stderr" } else { ".stdout" };
     let mut all_lines: Vec<(String, String)> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.ends_with(".stdout") {
+        if !name.ends_with(suffix) {
             continue;
         }
-        let proc_name = name.trim_end_matches(".stdout").to_string();
+        let proc_name = name.trim_end_matches(suffix).to_string();
         if let Ok(lines) = tail_file(&entry.path(), tail) {
             for line in lines {
                 all_lines.push((proc_name.clone(), line));
@@ -116,6 +159,10 @@ fn show_all_logs(log_dir: &std::path::Path, tail: usize) -> i32 {
 }
 
 pub(crate) fn tail_file(path: &std::path::Path, n: usize) -> std::io::Result<Vec<String>> {
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+
     let file = File::open(path)?;
     // Use a ring buffer to keep only the last N lines in memory
     let mut ring: std::collections::VecDeque<String> = std::collections::VecDeque::with_capacity(n);

@@ -1,15 +1,13 @@
 mod helpers;
-use assert_cmd::Command;
 use helpers::TestContext;
 use std::time::Duration;
 
 #[test]
 fn test_wait_until_pattern() {
     let ctx = TestContext::new("t-wait-pat");
-    ctx.set_env();
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -21,8 +19,8 @@ fn test_wait_until_pattern() {
         .output()
         .unwrap();
 
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -43,8 +41,8 @@ fn test_wait_until_pattern() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }
@@ -52,10 +50,9 @@ fn test_wait_until_pattern() {
 #[test]
 fn test_wait_exit() {
     let ctx = TestContext::new("t-wait-exit");
-    ctx.set_env();
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -67,8 +64,8 @@ fn test_wait_exit() {
         .output()
         .unwrap();
 
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -88,8 +85,52 @@ fn test_wait_exit() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
+        .args(["--session", &ctx.session, "stop-all"])
+        .output();
+}
+
+#[test]
+fn test_wait_exit_without_output() {
+    let ctx = TestContext::new("t-wait-exit-quiet");
+
+    let _ = ctx
+        .cmd()
+        .args([
+            "--session",
+            &ctx.session,
+            "run",
+            "sleep 1",
+            "--name",
+            "quiet",
+        ])
+        .output()
+        .unwrap();
+
+    let output = ctx
+        .cmd()
+        .args([
+            "--session",
+            &ctx.session,
+            "wait",
+            "quiet",
+            "--exit",
+            "--timeout",
+            "5",
+        ])
+        .timeout(Duration::from_secs(10))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wait exit failed for quiet process: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }
@@ -97,10 +138,9 @@ fn test_wait_exit() {
 #[test]
 fn test_wait_timeout() {
     let ctx = TestContext::new("t-wait-timeout");
-    ctx.set_env();
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -112,8 +152,8 @@ fn test_wait_timeout() {
         .output()
         .unwrap();
 
-    let output = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let output = ctx
+        .cmd()
         .args([
             "--session",
             &ctx.session,
@@ -129,8 +169,8 @@ fn test_wait_timeout() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
 
-    let _ = Command::cargo_bin("agent-procs")
-        .unwrap()
+    let _ = ctx
+        .cmd()
         .args(["--session", &ctx.session, "stop-all"])
         .output();
 }
