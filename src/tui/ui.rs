@@ -107,61 +107,88 @@ fn draw_output(frame: &mut Frame, app: &mut App, area: Rect) {
         name, mode_label, pause_indicator, filter_indicator
     );
 
-    let filter_pat = app.filter.as_deref();
-    let matches_filter = |line: &str| filter_pat.is_none_or(|p| line.contains(p));
+    // Cache visible height for scroll calculations
+    let visible_height = area.height.saturating_sub(2) as usize; // -2 for borders
+    app.visible_height = visible_height;
 
     let stderr_style = Style::default().fg(Color::Yellow);
 
-    let lines: Vec<Line> = if let Some(buf) = app.buffers.get(&name) {
-        match app.stream_mode {
-            StreamMode::Stdout => buf
-                .stdout_lines()
-                .filter(|l| matches_filter(l))
-                .map(|l| ansi_line(l, None))
-                .collect(),
-            StreamMode::Stderr => buf
-                .stderr_lines()
-                .filter(|l| matches_filter(l))
-                .map(|l| ansi_line(l, Some(stderr_style)))
-                .collect(),
-            StreamMode::Both => buf
-                .all_lines()
-                .filter(|(_, l)| matches_filter(l))
+    // Try windowed rendering (disk-backed). Falls back to None when filter is active.
+    if let Some(window) = app.visible_lines(&name, visible_height) {
+        let lines: Vec<Line> = if window.is_empty() && !app.buffers.contains_key(&name) {
+            vec![
+                Line::from("No output yet".to_string()).style(Style::default().fg(Color::DarkGray)),
+            ]
+        } else {
+            window
+                .iter()
                 .map(|(src, l)| {
-                    let style = if src == LineSource::Stderr {
+                    let style = if *src == LineSource::Stderr {
                         Some(stderr_style)
                     } else {
                         None
                     };
                     ansi_line(l, style)
                 })
-                .collect(),
-        }
+                .collect()
+        };
+
+        let paragraph =
+            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title));
+        frame.render_widget(paragraph, area);
     } else {
-        vec![Line::from("No output yet".to_string()).style(Style::default().fg(Color::DarkGray))]
-    };
+        // Filtered mode: fall back to collect-all-from-hot-buffer approach
+        let filter_pat = app.filter.as_deref();
+        let matches_filter = |line: &str| filter_pat.is_none_or(|p| line.contains(p));
 
-    // Cache visible height for scroll calculations
-    let visible_height = area.height.saturating_sub(2) as usize; // -2 for borders
-    app.visible_height = visible_height;
+        let lines: Vec<Line> = if let Some(buf) = app.buffers.get(&name) {
+            match app.stream_mode {
+                StreamMode::Stdout => buf
+                    .stdout_lines()
+                    .filter(|l| matches_filter(l))
+                    .map(|l| ansi_line(l, None))
+                    .collect(),
+                StreamMode::Stderr => buf
+                    .stderr_lines()
+                    .filter(|l| matches_filter(l))
+                    .map(|l| ansi_line(l, Some(stderr_style)))
+                    .collect(),
+                StreamMode::Both => buf
+                    .all_lines()
+                    .filter(|(_, l)| matches_filter(l))
+                    .map(|(src, l)| {
+                        let style = if src == LineSource::Stderr {
+                            Some(stderr_style)
+                        } else {
+                            None
+                        };
+                        ansi_line(l, style)
+                    })
+                    .collect(),
+            }
+        } else {
+            vec![
+                Line::from("No output yet".to_string()).style(Style::default().fg(Color::DarkGray)),
+            ]
+        };
 
-    let total_lines = lines.len();
-    let scroll_offset = if app.paused {
-        app.scroll_offsets
-            .get(name.as_str())
-            .copied()
-            .unwrap_or(0)
-            .min(total_lines.saturating_sub(visible_height))
-    } else {
-        0
-    };
-    let scroll_pos = total_lines.saturating_sub(visible_height + scroll_offset);
+        let total_lines = lines.len();
+        let scroll_offset = if app.paused {
+            app.scroll_offsets
+                .get(name.as_str())
+                .copied()
+                .unwrap_or(0)
+                .min(total_lines.saturating_sub(visible_height))
+        } else {
+            0
+        };
+        let scroll_pos = total_lines.saturating_sub(visible_height + scroll_offset);
 
-    let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .scroll((scroll_pos as u16, 0));
-
-    frame.render_widget(paragraph, area);
+        let paragraph = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .scroll((scroll_pos as u16, 0));
+        frame.render_widget(paragraph, area);
+    }
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {

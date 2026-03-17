@@ -10,6 +10,7 @@
 //! [`spawn`]) and exits when a `Shutdown` request is received.
 
 pub mod actor;
+pub mod log_index;
 pub mod log_writer;
 pub mod port_allocator;
 pub mod process_manager;

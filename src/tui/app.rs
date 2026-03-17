@@ -1,4 +1,5 @@
 use crate::protocol::{ProcessInfo, Stream};
+use crate::tui::disk_log_reader::DiskLogReader;
 use std::collections::{HashMap, VecDeque};
 
 const MAX_BUFFER_LINES: usize = 10_000;
@@ -21,6 +22,8 @@ pub enum LineSource {
 pub struct OutputBuffer {
     lines: VecDeque<(LineSource, String)>,
     max_lines: usize,
+    stdout_count: usize,
+    stderr_count: usize,
 }
 
 impl OutputBuffer {
@@ -28,14 +31,44 @@ impl OutputBuffer {
         Self {
             lines: VecDeque::with_capacity(max_lines),
             max_lines,
+            stdout_count: 0,
+            stderr_count: 0,
         }
     }
 
     pub fn push(&mut self, source: LineSource, line: String) {
-        if self.lines.len() == self.max_lines {
-            self.lines.pop_front();
+        if self.lines.len() == self.max_lines
+            && let Some((evicted, _)) = self.lines.pop_front()
+        {
+            match evicted {
+                LineSource::Stdout => self.stdout_count -= 1,
+                LineSource::Stderr => self.stderr_count -= 1,
+            }
+        }
+        match source {
+            LineSource::Stdout => self.stdout_count += 1,
+            LineSource::Stderr => self.stderr_count += 1,
         }
         self.lines.push_back((source, line));
+    }
+
+    /// O(1) count of total lines.
+    pub fn len(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
+    /// O(1) count of stdout lines.
+    pub fn stdout_count(&self) -> usize {
+        self.stdout_count
+    }
+
+    /// O(1) count of stderr lines.
+    pub fn stderr_count(&self) -> usize {
+        self.stderr_count
     }
 
     pub fn stdout_lines(&self) -> impl Iterator<Item = &str> {
@@ -82,6 +115,8 @@ pub struct App {
     pub filter: Option<String>,
     /// Cached visible height of the output pane (set during render).
     pub visible_height: usize,
+    /// Disk-backed log readers for each process.
+    pub disk_readers: HashMap<String, DiskLogReader>,
 }
 
 impl Default for App {
@@ -105,6 +140,7 @@ impl App {
             filter_buf: String::new(),
             filter: None,
             visible_height: 20,
+            disk_readers: HashMap::new(),
         }
     }
 
@@ -208,17 +244,162 @@ impl App {
         }
     }
 
-    /// Count visible lines for the selected process (respecting stream mode and filter).
-    fn line_count_for(&self, name: &str) -> usize {
+    /// Count visible lines for the selected process.
+    /// When a filter is active, uses only the hot buffer.
+    /// Otherwise, uses the disk-backed total (authoritative).
+    fn line_count_for(&mut self, name: &str) -> usize {
+        if self.filter.is_some() {
+            return self.hot_line_count(name, self.filter.as_deref());
+        }
+        self.total_line_count(name)
+    }
+
+    /// Total line count combining disk history and hot buffer.
+    /// Uses disk as authoritative; falls back to hot buffer if larger
+    /// (e.g. right after a process restart before disk catches up).
+    fn total_line_count(&mut self, name: &str) -> usize {
+        let hot = self.hot_line_count(name, None);
+        let disk = self.disk_line_count(name);
+        disk.max(hot)
+    }
+
+    /// Disk line count for the current stream mode.
+    fn disk_line_count(&mut self, name: &str) -> usize {
+        let mode = self.stream_mode;
+        self.disk_readers.get_mut(name).map_or(0, |r| match mode {
+            StreamMode::Stdout => r.line_count(LineSource::Stdout),
+            StreamMode::Stderr => r.line_count(LineSource::Stderr),
+            StreamMode::Both => r.line_count_both(),
+        })
+    }
+
+    /// Hot buffer line count, optionally filtered by a substring pattern.
+    /// O(1) when `filter` is `None`; O(n) when filtering.
+    fn hot_line_count(&self, name: &str, filter: Option<&str>) -> usize {
         let Some(buf) = self.buffers.get(name) else {
             return 0;
         };
-        let pat = self.filter.as_deref();
-        let matches = |line: &str| pat.is_none_or(|p| line.contains(p));
+        if let Some(pat) = filter {
+            let matches = |line: &str| line.contains(pat);
+            return match self.stream_mode {
+                StreamMode::Stdout => buf.stdout_lines().filter(|l| matches(l)).count(),
+                StreamMode::Stderr => buf.stderr_lines().filter(|l| matches(l)).count(),
+                StreamMode::Both => buf.all_lines().filter(|(_, l)| matches(l)).count(),
+            };
+        }
         match self.stream_mode {
-            StreamMode::Stdout => buf.stdout_lines().filter(|l| matches(l)).count(),
-            StreamMode::Stderr => buf.stderr_lines().filter(|l| matches(l)).count(),
-            StreamMode::Both => buf.all_lines().filter(|(_, l)| matches(l)).count(),
+            StreamMode::Stdout => buf.stdout_count(),
+            StreamMode::Stderr => buf.stderr_count(),
+            StreamMode::Both => buf.len(),
+        }
+    }
+
+    /// Fetch exactly the visible window of lines for rendering.
+    ///
+    /// When a filter is active, returns `None` — the caller should fall back
+    /// to the old collect-all-from-hot-buffer approach.
+    pub fn visible_lines(
+        &mut self,
+        name: &str,
+        visible_height: usize,
+    ) -> Option<Vec<(LineSource, String)>> {
+        if self.filter.is_some() {
+            return None; // caller falls back to hot buffer with filter
+        }
+
+        let total = self.total_line_count(name);
+        let scroll_offset = if self.paused {
+            self.scroll_offsets.get(name).copied().unwrap_or(0)
+        } else {
+            0
+        };
+
+        let window_end = total.saturating_sub(scroll_offset);
+        let window_start = window_end.saturating_sub(visible_height);
+        let count = window_end - window_start;
+
+        if count == 0 {
+            return Some(Vec::new());
+        }
+
+        let hot_len = self.hot_line_count(name, None);
+        let disk_count = self.disk_line_count(name);
+        // Boundary: lines before this come from disk, at or after from hot buffer.
+        let disk_boundary = disk_count.saturating_sub(hot_len);
+
+        if window_start >= disk_boundary {
+            // Entire window in hot buffer
+            let hot_start = window_start - disk_boundary;
+            Some(self.hot_buffer_range(name, hot_start, count))
+        } else if window_end <= disk_boundary {
+            // Entire window on disk
+            Some(self.disk_read_range(name, window_start, count))
+        } else {
+            // Split at boundary
+            let disk_part = disk_boundary - window_start;
+            let hot_part = window_end - disk_boundary;
+            let mut lines = self.disk_read_range(name, window_start, disk_part);
+            lines.extend(self.hot_buffer_range(name, 0, hot_part));
+            Some(lines)
+        }
+    }
+
+    /// Read a range from the hot buffer (no filter).
+    fn hot_buffer_range(
+        &self,
+        name: &str,
+        start: usize,
+        count: usize,
+    ) -> Vec<(LineSource, String)> {
+        let Some(buf) = self.buffers.get(name) else {
+            return Vec::new();
+        };
+        match self.stream_mode {
+            StreamMode::Stdout => buf
+                .stdout_lines()
+                .skip(start)
+                .take(count)
+                .map(|l| (LineSource::Stdout, l.to_string()))
+                .collect(),
+            StreamMode::Stderr => buf
+                .stderr_lines()
+                .skip(start)
+                .take(count)
+                .map(|l| (LineSource::Stderr, l.to_string()))
+                .collect(),
+            StreamMode::Both => buf
+                .all_lines()
+                .skip(start)
+                .take(count)
+                .map(|(src, l)| (src, l.to_string()))
+                .collect(),
+        }
+    }
+
+    /// Read a range from the disk reader.
+    fn disk_read_range(
+        &mut self,
+        name: &str,
+        start: usize,
+        count: usize,
+    ) -> Vec<(LineSource, String)> {
+        let Some(reader) = self.disk_readers.get_mut(name) else {
+            return Vec::new();
+        };
+        match self.stream_mode {
+            StreamMode::Stdout => reader
+                .read_lines(LineSource::Stdout, start, count)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|l| (LineSource::Stdout, l))
+                .collect(),
+            StreamMode::Stderr => reader
+                .read_lines(LineSource::Stderr, start, count)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|l| (LineSource::Stderr, l))
+                .collect(),
+            StreamMode::Both => reader.read_interleaved(start, count).unwrap_or_default(),
         }
     }
 
@@ -388,5 +569,166 @@ mod tests {
             make_process("c", ProcessState::Exited),
         ]);
         assert_eq!(app.exited_count(), 2);
+    }
+
+    #[test]
+    fn test_output_buffer_counters() {
+        let mut buf = OutputBuffer::new(5);
+        assert_eq!(buf.len(), 0);
+        assert_eq!(buf.stdout_count(), 0);
+        assert_eq!(buf.stderr_count(), 0);
+        assert!(buf.is_empty());
+
+        buf.push(LineSource::Stdout, "a".into());
+        buf.push(LineSource::Stderr, "b".into());
+        buf.push(LineSource::Stdout, "c".into());
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.stdout_count(), 2);
+        assert_eq!(buf.stderr_count(), 1);
+
+        // Fill to capacity and trigger eviction
+        buf.push(LineSource::Stdout, "d".into());
+        buf.push(LineSource::Stderr, "e".into());
+        assert_eq!(buf.len(), 5);
+        assert_eq!(buf.stdout_count(), 3);
+        assert_eq!(buf.stderr_count(), 2);
+
+        // Push one more — evicts "a" (Stdout)
+        buf.push(LineSource::Stderr, "f".into());
+        assert_eq!(buf.len(), 5);
+        assert_eq!(buf.stdout_count(), 2);
+        assert_eq!(buf.stderr_count(), 3);
+    }
+
+    #[test]
+    fn test_visible_lines_hot_buffer_only() {
+        let mut app = App::new();
+        // No disk readers, just hot buffer
+        for i in 0..20 {
+            app.push_output("web", Stream::Stdout, &format!("line {}", i));
+        }
+        app.update_processes(vec![make_process("web", ProcessState::Running)]);
+        app.visible_height = 10;
+
+        // Unpaused: should get the last 10 lines
+        let lines = app.visible_lines("web", 10).unwrap();
+        assert_eq!(lines.len(), 10);
+        assert_eq!(lines[0].1, "line 10");
+        assert_eq!(lines[9].1, "line 19");
+    }
+
+    #[test]
+    fn test_visible_lines_paused_scrolled() {
+        let mut app = App::new();
+        for i in 0..50 {
+            app.push_output("web", Stream::Stdout, &format!("line {}", i));
+        }
+        app.update_processes(vec![make_process("web", ProcessState::Running)]);
+        app.visible_height = 10;
+        app.paused = true;
+        app.scroll_offsets.insert("web".into(), 20);
+
+        let lines = app.visible_lines("web", 10).unwrap();
+        assert_eq!(lines.len(), 10);
+        // 50 total, scroll_offset=20, visible=10 → window [20..30)
+        assert_eq!(lines[0].1, "line 20");
+        assert_eq!(lines[9].1, "line 29");
+    }
+
+    #[test]
+    fn test_visible_lines_with_disk_reader() {
+        use crate::daemon::log_index::{IndexRecord, IndexWriter, idx_path_for};
+        use crate::tui::disk_log_reader::DiskLogReader;
+
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a disk log with 100 lines
+        let log_path = dir.path().join("web.stdout");
+        let idx_path = idx_path_for(&log_path);
+        let mut log_content = String::new();
+        let mut writer = IndexWriter::create(&idx_path, 0).unwrap();
+        let mut offset = 0u64;
+        for i in 0..100 {
+            let line = format!("disk line {}", i);
+            writer
+                .append(IndexRecord {
+                    byte_offset: offset,
+                    seq: i,
+                })
+                .unwrap();
+            log_content.push_str(&line);
+            log_content.push('\n');
+            offset += line.len() as u64 + 1;
+        }
+        writer.flush().unwrap();
+        std::fs::write(&log_path, log_content).unwrap();
+
+        let mut app = App::new();
+        app.disk_readers.insert(
+            "web".into(),
+            DiskLogReader::new(dir.path().to_path_buf(), "web".into()),
+        );
+
+        // Push the last 10 lines into hot buffer (simulating live streaming)
+        for i in 90..100 {
+            app.push_output("web", Stream::Stdout, &format!("disk line {}", i));
+        }
+
+        app.update_processes(vec![make_process("web", ProcessState::Running)]);
+        app.visible_height = 10;
+
+        // Total should be 100 (disk is authoritative)
+        assert_eq!(app.total_line_count("web"), 100);
+
+        // Unpaused: last 10 lines from hot buffer
+        let lines = app.visible_lines("web", 10).unwrap();
+        assert_eq!(lines.len(), 10);
+        assert_eq!(lines[0].1, "disk line 90");
+        assert_eq!(lines[9].1, "disk line 99");
+
+        // Scroll to top: should read from disk
+        app.paused = true;
+        app.scroll_offsets.insert("web".into(), 90);
+        let lines = app.visible_lines("web", 10).unwrap();
+        assert_eq!(lines.len(), 10);
+        assert_eq!(lines[0].1, "disk line 0");
+        assert_eq!(lines[9].1, "disk line 9");
+
+        // Scroll to middle (spanning disk/hot boundary)
+        // hot buffer has lines 90-99, disk boundary = 100 - 10 = 90
+        // scroll_offset=5 → window_end=95, window_start=85
+        // lines 85-89 from disk, lines 90-94 from hot
+        app.scroll_offsets.insert("web".into(), 5);
+        let lines = app.visible_lines("web", 10).unwrap();
+        assert_eq!(lines.len(), 10);
+        assert_eq!(lines[0].1, "disk line 85");
+        assert_eq!(lines[4].1, "disk line 89");
+        assert_eq!(lines[5].1, "disk line 90");
+        assert_eq!(lines[9].1, "disk line 94");
+    }
+
+    #[test]
+    fn test_visible_lines_returns_none_when_filtered() {
+        let mut app = App::new();
+        app.push_output("web", Stream::Stdout, "hello");
+        app.filter = Some("hello".into());
+
+        // Should return None so caller falls back to hot buffer filtering
+        assert!(app.visible_lines("web", 10).is_none());
+    }
+
+    #[test]
+    fn test_hot_line_count_with_and_without_filter() {
+        let mut app = App::new();
+        app.push_output("web", Stream::Stdout, "hello world");
+        app.push_output("web", Stream::Stdout, "goodbye world");
+        app.push_output("web", Stream::Stdout, "hello again");
+
+        // Unfiltered: O(1) count
+        assert_eq!(app.hot_line_count("web", None), 3);
+
+        // Filtered: O(n) scan
+        assert_eq!(app.hot_line_count("web", Some("hello")), 2);
+        assert_eq!(app.hot_line_count("web", Some("xyz")), 0);
     }
 }

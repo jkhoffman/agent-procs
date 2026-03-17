@@ -1,4 +1,5 @@
 use super::app::App;
+use super::disk_log_reader::DiskLogReader;
 use super::input;
 use crate::cli;
 use crate::cli::logs::tail_file;
@@ -112,6 +113,16 @@ impl TuiEventLoop {
                         app.push_output(&process, stream, &line);
                     }
                     AppEvent::StatusUpdate(processes) => {
+                        // Create disk readers for new processes
+                        let log_dir = paths::log_dir(&self.session);
+                        for p in &processes {
+                            if !app.disk_readers.contains_key(&p.name) {
+                                app.disk_readers.insert(
+                                    p.name.clone(),
+                                    DiskLogReader::new(log_dir.clone(), p.name.clone()),
+                                );
+                            }
+                        }
                         app.update_processes(processes);
                     }
                     AppEvent::OutputStreamClosed => {
@@ -317,9 +328,12 @@ pub async fn key_reader(tx: mpsc::Sender<AppEvent>) {
     }
 }
 
-/// Load the tail of each process's log files from disk into the app's output buffers.
-/// Uses `tail_file` to read only the last 1000 lines instead of entire files.
-pub fn load_historical_logs(session: &str, app: &mut App) {
+/// Initialize disk readers and pre-populate the hot buffer with recent lines.
+///
+/// Scans the log directory to discover process names, creates a `DiskLogReader`
+/// for each, and loads the last 1000 lines per stream into the hot buffer so
+/// the initial view has content before live lines arrive.
+pub fn init_disk_readers(session: &str, app: &mut App) {
     let log_dir = paths::log_dir(session);
 
     let entries = match std::fs::read_dir(&log_dir) {
@@ -327,8 +341,14 @@ pub fn load_historical_logs(session: &str, app: &mut App) {
         Err(_) => return,
     };
 
+    // Discover process names from existing log files
+    let mut seen_processes: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut file_entries: Vec<(String, ProtoStream, std::path::PathBuf)> = Vec::new();
+
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
+        // Match current log files (e.g., "web.stdout", "web.stderr")
+        // Skip rotated (.1, .2, ...) and index (.idx) files for hot buffer loading
         let (proc_name, stream) = if let Some(p) = name.strip_suffix(".stdout") {
             (p.to_string(), ProtoStream::Stdout)
         } else if let Some(p) = name.strip_suffix(".stderr") {
@@ -337,9 +357,23 @@ pub fn load_historical_logs(session: &str, app: &mut App) {
             continue;
         };
 
-        if let Ok(lines) = tail_file(&entry.path(), 1000) {
+        seen_processes.insert(proc_name.clone());
+        file_entries.push((proc_name, stream, entry.path()));
+    }
+
+    // Create disk readers for all discovered processes
+    for proc_name in &seen_processes {
+        app.disk_readers.insert(
+            proc_name.clone(),
+            DiskLogReader::new(log_dir.clone(), proc_name.clone()),
+        );
+    }
+
+    // Pre-populate hot buffer with last 1000 lines from current log files
+    for (proc_name, stream, path) in &file_entries {
+        if let Ok(lines) = tail_file(path, 1000) {
             for line in lines {
-                app.push_output(&proc_name, stream, &line);
+                app.push_output(proc_name, *stream, &line);
             }
         }
     }

@@ -8,6 +8,7 @@
 //! [`ui`] for rendering.
 
 pub mod app;
+pub mod disk_log_reader;
 pub mod event_loop;
 pub mod input;
 pub mod ui;
@@ -63,8 +64,8 @@ pub async fn run(session: &str) -> i32 {
     };
     let mut app = App::new();
 
-    // Load historical output from log files on disk
-    event_loop::load_historical_logs(session, &mut app);
+    // Initialize disk readers and load recent history into hot buffer
+    event_loop::init_disk_readers(session, &mut app);
 
     // Create event loop and spawn background tasks
     let mut event_loop = event_loop::TuiEventLoop::new(session);

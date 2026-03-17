@@ -5,10 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-03-17
+
+### Added
+
+- **Disk-backed virtual scrollback**: the TUI can now scroll through the entire
+  output history of a process, not just the last 10,000 lines held in memory.
+  The daemon writes a binary sidecar `.idx` file alongside each log file,
+  mapping line numbers to byte offsets for O(1) random-access reads.
+- **Sidecar line index format** (`LIDX`): 16-byte header + 16-byte records with
+  byte offset and global sequence number per line. Enables direct seeking to any
+  line without scanning the log file.
+- **Interleaved "Both" mode** uses per-process atomic sequence counters shared
+  between stdout/stderr capture tasks, so merge-sorting by sequence number
+  produces correct chronological ordering across streams.
+- **`DiskLogReader`** provides windowed random-access reads across current and
+  rotated log files, with automatic fallback to sequential scan when index files
+  are missing (backwards compatible with pre-0.5 logs).
+- **Segment cache** (500 ms TTL) in `DiskLogReader` eliminates repeated
+  filesystem stat calls within a render frame.
+- **`OutputBuffer` per-source counters** (`stdout_count`, `stderr_count`) for
+  O(1) line counting without iterating the ring buffer.
 
 ### Changed
 
+- `capture_output()` now accepts an `Arc<AtomicU64>` sequence counter and writes
+  index entries alongside log lines. Index is flushed every 64 lines (not per
+  line) to reduce syscalls while keeping the sidecar reasonably fresh.
+- `rotate_log_files()` now rotates `.idx` companion files alongside log files.
+- TUI startup replaced `load_historical_logs()` with `init_disk_readers()` which
+  creates `DiskLogReader` instances and pre-populates the hot buffer.
+- TUI rendering uses windowed `visible_lines()` — only the visible window of
+  lines is fetched (from disk or hot buffer), eliminating the previous approach
+  of collecting all lines and using `Paragraph::scroll()`.
+- When a filter is active, disk-backed scrollback is bypassed and the TUI falls
+  back to the 10,000-line hot buffer (filtered disk scrollback is a follow-up).
 - MSRV raised from 1.85 to 1.88 (required by `ansi-to-tui` v7 dependencies).
 - CI tests run single-threaded to prevent env var races in path tests.
 - CI security audit job granted `checks: write` permission.

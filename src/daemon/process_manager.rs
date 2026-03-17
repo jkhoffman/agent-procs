@@ -7,6 +7,8 @@ use crate::protocol::{
 use crate::session::IdCounter;
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
 use tokio::sync::broadcast;
@@ -165,11 +167,15 @@ impl ProcessManager {
 
         let pid = child.id().unwrap_or(0);
 
+        // Shared sequence counter for interleaved ordering across streams
+        let seq_counter = Arc::new(AtomicU64::new(0));
+
         // Spawn output capture tasks via log_writer
         if let Some(stdout) = child.stdout.take() {
             let tx = self.output_tx.clone();
             let pname = name.clone();
             let path = log_dir.join(format!("{}.stdout", name));
+            let seq = Arc::clone(&seq_counter);
             tokio::spawn(async move {
                 log_writer::capture_output(
                     stdout,
@@ -179,6 +185,7 @@ impl ProcessManager {
                     tx,
                     DEFAULT_MAX_LOG_BYTES,
                     log_writer::DEFAULT_MAX_ROTATED_FILES,
+                    seq,
                 )
                 .await;
             });
@@ -187,6 +194,7 @@ impl ProcessManager {
             let tx = self.output_tx.clone();
             let pname = name.clone();
             let path = log_dir.join(format!("{}.stderr", name));
+            let seq = Arc::clone(&seq_counter);
             tokio::spawn(async move {
                 log_writer::capture_output(
                     stderr,
@@ -196,6 +204,7 @@ impl ProcessManager {
                     tx,
                     DEFAULT_MAX_LOG_BYTES,
                     log_writer::DEFAULT_MAX_ROTATED_FILES,
+                    seq,
                 )
                 .await;
             });
