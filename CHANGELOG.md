@@ -7,10 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-17
+
 ### Fixed
 
 - TUI now renders ANSI colors natively via `ansi-to-tui` instead of stripping
   them -- process output shows original colors (Vite green, Elixir log levels).
+- Trackpad/mouse scroll moves 3 lines per event instead of half a page,
+  preventing content from flying past on swipe.
+- Scroll offset clamped to content bounds -- scrolling past the top no longer
+  accumulates invisible debt requiring equal downward scrolling to undo.
 
 ### Changed
 
@@ -202,7 +208,8 @@ Initial release.
 - CLI `--help` with workflow examples, daemon model, exit codes, and config
   format documentation.
 
-[Unreleased]: https://github.com/jkhoffman/agent-procs/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jkhoffman/agent-procs/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/jkhoffman/agent-procs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jkhoffman/agent-procs/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/jkhoffman/agent-procs/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/jkhoffman/agent-procs/compare/v0.2.2...v0.3.0
