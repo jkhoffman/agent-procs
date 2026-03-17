@@ -2,7 +2,75 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Fixed
+
+- TUI now renders ANSI colors natively via `ansi-to-tui` instead of stripping
+  them -- process output shows original colors (Vite green, Elixir log levels).
+
+### Changed
+
+- CI release workflow publishes to crates.io automatically on tag push
+  (requires `CARGO_REGISTRY_TOKEN` secret).
+- Added pre-commit hook (fmt, clippy, test) in `.githooks/`.
+
+## [0.4.0] - 2026-03-17
+
+### Added
+
+- **Typed `ErrorCode` enum** (`General` / `NotFound`) replacing raw `i32` error
+  codes, wire-compatible via `serde(into = "i32", from = "i32")`.
+- **Protocol versioning**: `PROTOCOL_VERSION` constant, `Hello` / `Unknown`
+  variants on both `Request` and `Response` with `#[serde(other)]` for forward
+  compatibility.
+- **Centralized `process_url()`** for URL construction (removes 4 duplicate
+  `format!` calls).
+- **`request_and_handle()` CLI helper** eliminating error-dispatch boilerplate
+  in `stop`, `restart`, `run`, `status`, and `wait` commands.
+- **Actor / channel model** (`ProcessManagerActor` + `PmHandle`) replacing
+  `Arc<Mutex<DaemonState>>` -- commands are processed sequentially via an
+  `mpsc` channel with `oneshot` reply channels.
+- **Lock-free proxy port lookup** via `watch` channel for the reverse proxy hot
+  path.
+- **`PortAllocator`** extracted from `ProcessManager` into its own module.
+- **N-file cascading log rotation** (default 5 rotated files, up from 1).
+- **`TuiEventLoop`** extracted from `tui/mod.rs` with `ReconnectState` state
+  machine replacing `Arc<AtomicU32>` approach.
+- **Hidden `RunDaemon` clap subcommand** replacing raw `std::env::args()`
+  parsing.
+
+### Changed
+
+- `OutputBuffer` methods (`stdout_lines`, `stderr_lines`, `all_lines`) return
+  iterators instead of `Vec` allocations.
+- TUI loads last 1000 lines via `tail_file` instead of reading entire log
+  files on startup.
+- Proxy status page now correctly shows proxy URLs (was showing direct
+  `127.0.0.1` URLs).
+- `proxy_port` consolidated as single source of truth inside the actor
+  (removed redundant `Arc<Mutex>`).
+- Proxy state watch channel skips no-op updates via change detection.
+
+### Removed
+
+- `DaemonState` struct (replaced by actor model).
+- Dead `get_process_port` method (superseded by `running_ports()`).
+
+## [0.3.1] - 2026-03-16
+
+### Added
+
+- Mouse support in TUI (scroll wheel, click to select process).
+- Scroll and filter in TUI output pane (vim-style `u`/`d` half-page scroll,
+  `g`/`G` top/bottom, `/` to filter).
+
+### Fixed
+
+- `Q` in TUI sends `Shutdown` (stop all + quit) instead of `StopAll`.
 
 ## [0.3.0] - 2026-03-16
 
@@ -133,3 +201,13 @@ Initial release.
 - XDG-compliant path resolution for state directories.
 - CLI `--help` with workflow examples, daemon model, exit codes, and config
   format documentation.
+
+[Unreleased]: https://github.com/jkhoffman/agent-procs/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jkhoffman/agent-procs/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/jkhoffman/agent-procs/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/jkhoffman/agent-procs/compare/v0.2.2...v0.3.0
+[0.2.2]: https://github.com/jkhoffman/agent-procs/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/jkhoffman/agent-procs/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/jkhoffman/agent-procs/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/jkhoffman/agent-procs/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/jkhoffman/agent-procs/releases/tag/v0.1.0
