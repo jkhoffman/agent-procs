@@ -1,7 +1,18 @@
 use crate::protocol::Stream as ProtoStream;
 use std::path::Path;
+use std::sync::LazyLock;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast;
+
+/// Regex matching ANSI escape sequences (CSI, OSC, and simple two-byte escapes).
+static ANSI_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?(\x07|\x1b\\)|\x1b[()][A-B0-2]").unwrap()
+});
+
+/// Strip ANSI escape sequences from a string.
+fn strip_ansi(s: &str) -> String {
+    ANSI_RE.replace_all(s, "").into_owned()
+}
 
 /// Default number of rotated log files to keep.
 pub const DEFAULT_MAX_ROTATED_FILES: u32 = 5;
@@ -35,7 +46,8 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
     };
     let mut bytes_written: u64 = 0;
 
-    while let Ok(Some(line)) = lines.next_line().await {
+    while let Ok(Some(raw_line)) = lines.next_line().await {
+        let line = strip_ansi(&raw_line);
         // Write to log file (with rotation check)
         let line_bytes = line.len() as u64 + 1; // +1 for newline
         if max_bytes > 0 && bytes_written + line_bytes > max_bytes {
