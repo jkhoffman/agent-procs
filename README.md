@@ -14,6 +14,12 @@ cargo install agent-procs
 # Start a process
 agent-procs run "npm run dev" --name server
 
+# Auto-restart on crash (up to 5 times)
+agent-procs run "npm start" --name api --autorestart on-failure --max-restarts 5
+
+# Restart when source files change
+agent-procs run "npm run dev" --name server --watch "src/**"
+
 # Wait for it to be ready
 agent-procs wait server --until "Listening on" --timeout 30
 
@@ -40,6 +46,8 @@ processes:
   db:
     cmd: docker compose up postgres
     ready: "ready to accept connections"
+    autorestart: always
+    max_restarts: 3
   api:
     cmd: ./start-api-server
     cwd: ./backend
@@ -48,6 +56,12 @@ processes:
     ready: "Listening on :8080"
     port: 8080
     depends_on: [db]
+    autorestart: on-failure
+    watch:
+      - "src/**"
+      - "config/*"
+    watch_ignore:
+      - "*.generated.ts"
 ```
 
 Processes start in dependency order; independent ones run concurrently.
@@ -70,6 +84,11 @@ agent-procs down                  # stop all
 | `ready` | no | Stdout pattern that signals the process is ready |
 | `depends_on` | no | List of process names that must be ready first |
 | `port` | no | Port number — injected as `PORT` and `HOST=127.0.0.1` env vars |
+| `autorestart` | no | Restart policy: `always`, `on-failure`, or `never` (default) |
+| `max_restarts` | no | Maximum restart attempts (unlimited if omitted) |
+| `restart_delay` | no | Delay between crash and restart in ms (default: 1000) |
+| `watch` | no | List of glob patterns — restart process when matched files change |
+| `watch_ignore` | no | Additional glob patterns to ignore (`.git`, `node_modules`, `target`, `__pycache__` always ignored) |
 
 **Top-level fields:**
 
@@ -105,7 +124,7 @@ agent-procs run "node server.js" --name api --port 3001 --proxy
 
 | Command | Description |
 |---------|-------------|
-| `run <cmd> [--name N] [--port P] [--proxy]` | Spawn a background process |
+| `run <cmd> [--name N] [--port P] [--proxy] [--autorestart MODE] [--max-restarts N] [--restart-delay MS] [--watch GLOB]... [--watch-ignore GLOB]...` | Spawn a background process |
 | `stop <name>` | Stop a process |
 | `stop-all` | Stop all processes |
 | `restart <name>` | Restart a process |
@@ -120,6 +139,43 @@ agent-procs run "node server.js" --name api --port 3001 --proxy
 | `ui` | Open terminal UI |
 | `completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
 
+## Restart policies
+
+Automatically recover from crashes without agent intervention.
+
+```bash
+# Restart on non-zero exit, up to 5 times with 2s delay
+agent-procs run "npm start" --name api \
+  --autorestart on-failure --max-restarts 5 --restart-delay 2000
+
+# Always restart (even clean exits), unlimited attempts
+agent-procs run "worker" --name bg --autorestart always
+```
+
+| Mode | Behavior |
+|------|----------|
+| `always` | Restart on any exit |
+| `on-failure` | Restart only on non-zero exit |
+| `never` | Don't restart (default) |
+
+When `max_restarts` is exhausted, the process enters `Failed` state. Manual `stop` disables auto-restart; `restart` re-enables it and resets the count.
+
+Supervisor annotations (`[agent-procs] Restarted`, `Max restarts exhausted`) are written to disk logs and visible in `logs --tail`, `--follow`, and the TUI.
+
+## File watch mode
+
+Auto-restart processes when source files change.
+
+```bash
+agent-procs run "npm run dev" --name server --watch "src/**" --watch "config/*"
+```
+
+- Uses OS-native file watching (FSEvents on macOS, inotify on Linux) with 500ms debounce
+- `.git`, `node_modules`, `target`, and `__pycache__` are always ignored
+- Add `--watch-ignore "*.log"` for additional ignore patterns
+- Watch restarts reset the restart count (they're intentional, not crashes)
+- File changes can revive a `Failed` process
+
 ## Sessions
 
 Use `--session` to isolate process groups (e.g. per-project):
@@ -132,7 +188,7 @@ agent-procs --session projectA status   # only shows projectA's processes
 
 ## Architecture
 
-The CLI communicates with a per-session background daemon over a Unix domain socket. The daemon manages process lifecycles, captures stdout/stderr to log files, and handles wait conditions. The daemon auto-starts on first use and exits when all processes are stopped.
+The CLI communicates with a per-session background daemon over a Unix domain socket. The daemon manages process lifecycles, captures stdout/stderr to log files, handles wait conditions, and supervises processes with restart policies and file watchers. The daemon auto-starts on first use and exits when all processes are stopped.
 
 ## Exit codes
 
