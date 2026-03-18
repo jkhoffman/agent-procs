@@ -1,4 +1,4 @@
-use crate::protocol::{Request, Response, RestartMode, RestartPolicy, WatchConfig};
+use crate::protocol::{Request, Response, RestartPolicy, WatchConfig};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn execute(
@@ -17,31 +17,8 @@ pub async fn execute(
         return code;
     }
 
-    let restart = autorestart.map(|mode_str| {
-        let mode = match mode_str.as_str() {
-            "always" => RestartMode::Always,
-            "on-failure" => RestartMode::OnFailure,
-            _ => RestartMode::Never,
-        };
-        RestartPolicy {
-            mode,
-            max_restarts,
-            restart_delay_ms: restart_delay.unwrap_or(1000),
-        }
-    });
-
-    let watch_config = if watch.is_empty() {
-        None
-    } else {
-        Some(WatchConfig {
-            paths: watch,
-            ignore: if watch_ignore.is_empty() {
-                None
-            } else {
-                Some(watch_ignore)
-            },
-        })
-    };
+    let restart = autorestart.map(|m| RestartPolicy::from_args(&m, max_restarts, restart_delay));
+    let watch_config = WatchConfig::from_args(watch, watch_ignore);
 
     let req = Request::Run {
         command: command.into(),

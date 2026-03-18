@@ -274,8 +274,9 @@ impl ProcessManagerActor {
     /// Check for exited processes eligible for auto-restart, schedule delayed restarts.
     /// Also detects processes that have exhausted their `max_restarts` and marks them failed.
     fn schedule_restarts(&mut self) {
-        // First, mark processes that have exhausted their restarts as failed
-        let exhausted: Vec<String> = self.pm.exhausted_restart_processes().into_iter().collect();
+        let (restartable, exhausted) = self.pm.classify_restart_candidates();
+
+        // Mark exhausted processes as failed
         for name in &exhausted {
             if let Some(p) = self.pm.find(name)
                 && let Some(ref policy) = p.restart_policy
@@ -291,8 +292,7 @@ impl ProcessManagerActor {
             self.publish_proxy_state();
         }
 
-        // Then schedule restarts for eligible processes
-        let restartable = self.pm.collect_restartable_processes();
+        // Schedule delayed restarts for eligible processes
         for name in restartable {
             if let Some(p) = self.pm.find_mut(&name) {
                 p.restart_pending = true;
@@ -370,11 +370,8 @@ impl ProcessManagerActor {
                 self.publish_proxy_state();
                 let _ = reply.send(resp);
             }
-            PmCommand::Status { reply } => {
+            PmCommand::Status { reply } | PmCommand::StatusSnapshot { reply } => {
                 let _ = reply.send(self.build_status());
-            }
-            PmCommand::StatusSnapshot { reply } => {
-                let _ = reply.send(self.build_status_snapshot());
             }
             PmCommand::HasProcess { target, reply } => {
                 let _ = reply.send(self.pm.has_process(&target));
@@ -560,16 +557,6 @@ impl ProcessManagerActor {
 
     /// Build a status response with proxy URL rewriting applied.
     fn build_status(&mut self) -> Response {
-        if self.pm.refresh_exit_states() {
-            self.publish_proxy_state();
-        }
-        let mut resp = self.pm.status_snapshot();
-        self.rewrite_urls(&mut resp);
-        resp
-    }
-
-    /// Build a status snapshot with proxy URL rewriting applied.
-    fn build_status_snapshot(&mut self) -> Response {
         if self.pm.refresh_exit_states() {
             self.publish_proxy_state();
         }

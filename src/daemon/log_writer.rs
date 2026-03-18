@@ -18,44 +18,39 @@ pub struct OutputLine {
 }
 
 /// State for writing lines to a log file with index and broadcast.
-struct LogWriteState {
-    file: tokio::fs::File,
+struct LogWriteState<'a> {
+    file: Option<tokio::fs::File>,
     idx_writer: IndexWriter,
     bytes_written: u64,
     lines_since_idx_flush: u32,
+    // Invariant context (set once, never changes)
+    log_path: &'a Path,
+    process_name: &'a str,
+    stream: ProtoStream,
+    tx: &'a broadcast::Sender<OutputLine>,
+    max_bytes: u64,
+    max_rotated_files: u32,
+    seq: &'a AtomicU64,
 }
 
-impl LogWriteState {
-    #[allow(clippy::too_many_arguments)]
-    async fn write_line(
-        &mut self,
-        line: &str,
-        log_path: &Path,
-        process_name: &str,
-        stream: ProtoStream,
-        tx: &broadcast::Sender<OutputLine>,
-        max_bytes: u64,
-        max_rotated_files: u32,
-        seq: &AtomicU64,
-    ) {
+impl LogWriteState<'_> {
+    async fn write_line(&mut self, line: &str) {
         let line_bytes = line.len() as u64 + 1;
-        if max_bytes > 0 && self.bytes_written + line_bytes > max_bytes {
+        if self.max_bytes > 0 && self.bytes_written + line_bytes > self.max_bytes {
             let _ = self.idx_writer.flush();
-            // Rotate: drop file handles, rotate, reopen
-            let placeholder = tokio::fs::File::create("/dev/null").await.unwrap();
-            let old_file = std::mem::replace(&mut self.file, placeholder);
-            drop(old_file);
+            // Drop file handle before rotation
+            self.file = None;
 
-            rotate_log_files(log_path, max_rotated_files).await;
-            self.file = match tokio::fs::File::create(log_path).await {
-                Ok(f) => f,
+            rotate_log_files(self.log_path, self.max_rotated_files).await;
+            self.file = match tokio::fs::File::create(self.log_path).await {
+                Ok(f) => Some(f),
                 Err(e) => {
-                    tracing::warn!(path = %log_path.display(), process = %process_name, error = %e, "cannot recreate log file after rotation");
+                    tracing::warn!(path = %self.log_path.display(), process = %self.process_name, error = %e, "cannot recreate log file after rotation");
                     return;
                 }
             };
-            let idx_path = idx_path_for(log_path);
-            let new_seq_base = seq.load(Ordering::Relaxed);
+            let idx_path = idx_path_for(self.log_path);
+            let new_seq_base = self.seq.load(Ordering::Relaxed);
             self.idx_writer = match IndexWriter::create(&idx_path, new_seq_base) {
                 Ok(w) => w,
                 Err(e) => {
@@ -67,16 +62,20 @@ impl LogWriteState {
             self.lines_since_idx_flush = 0;
         }
 
+        let Some(ref mut file) = self.file else {
+            return;
+        };
+
         let byte_offset = self.bytes_written;
-        let line_seq = seq.fetch_add(1, Ordering::Relaxed);
+        let line_seq = self.seq.fetch_add(1, Ordering::Relaxed);
         let _ = self.idx_writer.append(IndexRecord {
             byte_offset,
             seq: line_seq,
         });
 
-        let _ = self.file.write_all(line.as_bytes()).await;
-        let _ = self.file.write_all(b"\n").await;
-        let _ = self.file.flush().await;
+        let _ = file.write_all(line.as_bytes()).await;
+        let _ = file.write_all(b"\n").await;
+        let _ = file.flush().await;
         self.bytes_written += line_bytes;
 
         self.lines_since_idx_flush += 1;
@@ -85,9 +84,9 @@ impl LogWriteState {
             self.lines_since_idx_flush = 0;
         }
 
-        let _ = tx.send(OutputLine {
-            process: process_name.to_string(),
-            stream,
+        let _ = self.tx.send(OutputLine {
+            process: self.process_name.to_string(),
+            stream: self.stream,
             line: line.to_string(),
         });
     }
@@ -131,10 +130,17 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
     };
 
     let mut state = LogWriteState {
-        file,
+        file: Some(file),
         idx_writer,
         bytes_written: 0,
         lines_since_idx_flush: 0,
+        log_path,
+        process_name,
+        stream,
+        tx: &tx,
+        max_bytes,
+        max_rotated_files,
+        seq: &seq,
     };
 
     // Main loop: select between pipe reads and supervisor channel
@@ -149,34 +155,12 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
             Some(sup_line) = sup_rx.recv() => sup_line,
         };
 
-        state
-            .write_line(
-                &line,
-                log_path,
-                process_name,
-                stream,
-                &tx,
-                max_bytes,
-                max_rotated_files,
-                &seq,
-            )
-            .await;
+        state.write_line(&line).await;
     }
 
     // After pipe EOF, drain remaining supervisor lines
     while let Some(sup_line) = sup_rx.recv().await {
-        state
-            .write_line(
-                &sup_line,
-                log_path,
-                process_name,
-                stream,
-                &tx,
-                max_bytes,
-                max_rotated_files,
-                &seq,
-            )
-            .await;
+        state.write_line(&sup_line).await;
     }
 
     // Flush remaining buffered index entries

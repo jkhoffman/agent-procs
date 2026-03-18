@@ -67,6 +67,55 @@ pub enum RestartMode {
     Never,
 }
 
+impl RestartMode {
+    /// Parse a mode string (from CLI or config). Unknown values map to `Never`.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "always" => Self::Always,
+            "on-failure" => Self::OnFailure,
+            _ => Self::Never,
+        }
+    }
+
+    /// Whether this mode should trigger a restart given the exit code.
+    pub fn should_restart(self, exit_code: Option<i32>) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Always => true,
+            Self::OnFailure => exit_code != Some(0),
+        }
+    }
+}
+
+impl RestartPolicy {
+    /// Build from CLI/config string arguments.
+    pub fn from_args(mode: &str, max_restarts: Option<u32>, restart_delay: Option<u64>) -> Self {
+        Self {
+            mode: RestartMode::parse(mode),
+            max_restarts,
+            restart_delay_ms: restart_delay.unwrap_or(1000),
+        }
+    }
+}
+
+impl WatchConfig {
+    /// Build from CLI/config path and ignore lists. Returns `None` if paths is empty.
+    pub fn from_args(paths: Vec<String>, ignore: Vec<String>) -> Option<Self> {
+        if paths.is_empty() {
+            None
+        } else {
+            Some(Self {
+                paths,
+                ignore: if ignore.is_empty() {
+                    None
+                } else {
+                    Some(ignore)
+                },
+            })
+        }
+    }
+}
+
 /// File-watch configuration for auto-restart on changes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WatchConfig {
@@ -242,6 +291,17 @@ pub enum ProcessState {
     Exited,
     Failed,
     Unknown,
+}
+
+impl std::fmt::Display for ProcessState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running => write!(f, "running"),
+            Self::Exited => write!(f, "exited"),
+            Self::Failed => write!(f, "FAILED"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for ProcessState {

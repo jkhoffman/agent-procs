@@ -491,65 +491,31 @@ impl ProcessManager {
         }
     }
 
-    /// Returns names of processes eligible for auto-restart.
-    /// A process is eligible if: exited, not manually stopped, not `restart_pending`,
-    /// has a restart policy, and the policy/exit code combination allows restart.
-    pub fn collect_restartable_processes(&self) -> Vec<String> {
-        self.processes
-            .values()
-            .filter(|p| {
-                p.child.is_none()
-                    && !p.manually_stopped
-                    && !p.restart_pending
-                    && !p.failed
-                    && p.restart_policy.is_some()
-            })
-            .filter(|p| {
-                let policy = p.restart_policy.as_ref().unwrap();
-                match policy.mode {
-                    RestartMode::Never => false,
-                    RestartMode::Always => true,
-                    RestartMode::OnFailure => p.exit_code != Some(0),
-                }
-            })
-            .filter(|p| {
-                let policy = p.restart_policy.as_ref().unwrap();
-                policy.max_restarts.is_none_or(|max| p.restart_count < max)
-            })
-            .map(|p| p.name.clone())
-            .collect()
-    }
-
-    /// Returns names of processes that have exhausted their max restarts.
-    /// These are exited, not manually stopped, not failed yet, have a restart policy
-    /// with `max_restarts`, and `restart_count` >= `max_restarts`.
-    pub fn exhausted_restart_processes(&self) -> Vec<String> {
-        self.processes
-            .values()
-            .filter(|p| {
-                p.child.is_none()
-                    && !p.manually_stopped
-                    && !p.restart_pending
-                    && !p.failed
-                    && p.restart_policy.is_some()
-            })
-            .filter(|p| {
-                let policy = p.restart_policy.as_ref().unwrap();
-                // Must have a restart mode that would restart
-                match policy.mode {
-                    RestartMode::Never => false,
-                    RestartMode::Always => true,
-                    RestartMode::OnFailure => p.exit_code != Some(0),
-                }
-            })
-            .filter(|p| {
-                let policy = p.restart_policy.as_ref().unwrap();
-                policy
-                    .max_restarts
-                    .is_some_and(|max| p.restart_count >= max)
-            })
-            .map(|p| p.name.clone())
-            .collect()
+    /// Classify exited processes that have a restart policy into "restartable" vs "exhausted".
+    /// Returns `(restartable, exhausted)` name vectors in a single pass.
+    pub fn classify_restart_candidates(&self) -> (Vec<String>, Vec<String>) {
+        let mut restartable = Vec::new();
+        let mut exhausted = Vec::new();
+        for p in self.processes.values() {
+            if p.child.is_some() || p.manually_stopped || p.restart_pending || p.failed {
+                continue;
+            }
+            let Some(ref policy) = p.restart_policy else {
+                continue;
+            };
+            if !policy.mode.should_restart(p.exit_code) {
+                continue;
+            }
+            if policy
+                .max_restarts
+                .is_some_and(|max| p.restart_count >= max)
+            {
+                exhausted.push(p.name.clone());
+            } else {
+                restartable.push(p.name.clone());
+            }
+        }
+        (restartable, exhausted)
     }
 
     /// Mark a process as failed (max restarts exhausted).

@@ -1,4 +1,4 @@
-use crate::protocol::{ProcessState, Request, Response};
+use crate::protocol::{Request, Response};
 use std::fmt::Write;
 
 pub async fn execute(session: &str, json: bool) -> i32 {
@@ -36,12 +36,7 @@ pub async fn execute(session: &str, json: bool) -> i32 {
                 println!("{}", header);
 
                 for p in &processes {
-                    let state = match p.state {
-                        ProcessState::Running => "running",
-                        ProcessState::Exited => "exited",
-                        ProcessState::Failed => "FAILED",
-                        ProcessState::Unknown => "unknown",
-                    };
+                    let state = p.state.to_string();
                     let exit = p.exit_code.map_or("-".into(), |c| c.to_string());
                     let uptime = p.uptime_secs.map_or("-".into(), format_uptime);
 

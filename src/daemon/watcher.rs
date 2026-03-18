@@ -33,8 +33,9 @@ pub fn create_watcher(
     process_name: String,
     restart_tx: mpsc::Sender<String>,
 ) -> Result<WatchHandle, String> {
-    let _ignore_set = build_ignore_set(ignore)?;
-    let _watch_set = build_watch_set(paths)?;
+    let ignore_set = build_ignore_set(ignore)?;
+    let watch_set = build_watch_set(paths)?;
+    let base_for_filter = base_dir.to_path_buf();
 
     let (event_tx, mut event_rx) = mpsc::channel::<PathBuf>(256);
 
@@ -42,6 +43,14 @@ pub fn create_watcher(
         move |res: Result<Event, notify::Error>| {
             if let Ok(event) = res {
                 for path in event.paths {
+                    // Filter: path must match watch globs and not match ignore globs
+                    let relative = path.strip_prefix(&base_for_filter).unwrap_or(&path);
+                    if !watch_set.is_match(relative) && !watch_set.is_match(&path) {
+                        continue;
+                    }
+                    if ignore_set.is_match(relative) || ignore_set.is_match(&path) {
+                        continue;
+                    }
                     let _ = event_tx.blocking_send(path);
                 }
             }
@@ -110,7 +119,6 @@ fn build_watch_set(paths: &[String]) -> Result<GlobSet, String> {
 }
 
 fn resolve_watch_dirs(_patterns: &[String], base: &Path) -> Vec<PathBuf> {
-    // For each glob pattern, watch the base directory
-    // (notify handles recursive watching, glob filtering happens in debounce)
+    // Watch base directory recursively; glob filtering happens in the event callback
     vec![base.to_path_buf()]
 }
