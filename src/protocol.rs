@@ -225,6 +225,14 @@ pub struct ProcessInfo {
     pub port: Option<u16>,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
+    pub restart_count: Option<u32>,
+    #[serde(default)]
+    pub max_restarts: Option<u32>,
+    #[serde(default)]
+    pub restart_policy: Option<String>,
+    #[serde(default)]
+    pub watched: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -369,6 +377,10 @@ mod tests {
             command: "cargo run".into(),
             port: Some(8080),
             url: Some("http://127.0.0.1:8080".into()),
+            restart_count: None,
+            max_restarts: None,
+            restart_policy: None,
+            watched: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         let parsed: ProcessInfo = serde_json::from_str(&json).unwrap();

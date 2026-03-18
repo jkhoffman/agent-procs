@@ -413,6 +413,10 @@ impl ProcessManager {
                 command: p.command.clone(),
                 port: p.port,
                 url: p.port.map(|port| process_url(&p.name, port, None)),
+                restart_count: None,
+                max_restarts: None,
+                restart_policy: None,
+                watched: None,
             })
             .collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));

@@ -33,6 +33,10 @@ fn test_status_response_roundtrip() {
             command: "npm run dev".into(),
             port: None,
             url: None,
+            restart_count: None,
+            max_restarts: None,
+            restart_policy: None,
+            watched: None,
         }],
     };
     let json = serde_json::to_string(&resp).unwrap();
@@ -211,6 +215,39 @@ fn test_process_state_existing_variants_unchanged() {
     assert_eq!(running, ProcessState::Running);
     let exited: ProcessState = serde_json::from_str(r#""exited""#).unwrap();
     assert_eq!(exited, ProcessState::Exited);
+}
+
+#[test]
+fn test_process_info_with_restart_fields() {
+    let info = ProcessInfo {
+        name: "server".into(),
+        id: "p1".into(),
+        pid: 1234,
+        state: ProcessState::Failed,
+        exit_code: Some(1),
+        uptime_secs: None,
+        command: "npm start".into(),
+        port: None,
+        url: None,
+        restart_count: Some(5),
+        max_restarts: Some(5),
+        restart_policy: Some("on-failure".into()),
+        watched: Some(true),
+    };
+    let json = serde_json::to_string(&info).unwrap();
+    let parsed: ProcessInfo = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, info);
+}
+
+#[test]
+fn test_process_info_backward_compat_missing_restart_fields() {
+    // Old ProcessInfo JSON without restart fields should parse with defaults
+    let json = r#"{"name":"web","id":"p1","pid":42,"state":"running","exit_code":null,"uptime_secs":100,"command":"ls","port":null,"url":null}"#;
+    let parsed: ProcessInfo = serde_json::from_str(json).unwrap();
+    assert!(parsed.restart_count.is_none());
+    assert!(parsed.max_restarts.is_none());
+    assert!(parsed.restart_policy.is_none());
+    assert!(parsed.watched.is_none());
 }
 
 #[test]

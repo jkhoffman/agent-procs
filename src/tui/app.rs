@@ -496,6 +496,10 @@ mod tests {
             command: "true".into(),
             port: None,
             url: None,
+            restart_count: None,
+            max_restarts: None,
+            restart_policy: None,
+            watched: None,
         }
     }
 

@@ -133,6 +133,10 @@ fn arb_process_info() -> impl Strategy<Value = ProcessInfo> {
                 command,
                 port,
                 url,
+                restart_count: None,
+                max_restarts: None,
+                restart_policy: None,
+                watched: None,
             },
         )
 }

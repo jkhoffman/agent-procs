@@ -96,5 +96,9 @@ fn make_info(name: &str, state: ProcessState) -> ProcessInfo {
         command: "test".into(),
         port: None,
         url: None,
+        restart_count: None,
+        max_restarts: None,
+        restart_policy: None,
+        watched: None,
     }
 }
