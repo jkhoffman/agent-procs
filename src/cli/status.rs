@@ -29,6 +29,8 @@ pub async fn execute(session: &str, json: bool) -> i32 {
                     let state = match p.state {
                         ProcessState::Running => "running",
                         ProcessState::Exited => "exited",
+                        ProcessState::Failed => "FAILED",
+                        ProcessState::Unknown => "unknown",
                     };
                     let exit = p.exit_code.map_or("-".into(), |c| c.to_string());
                     let uptime = p.uptime_secs.map_or("-".into(), format_uptime);

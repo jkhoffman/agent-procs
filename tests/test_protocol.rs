@@ -190,6 +190,30 @@ fn test_run_request_with_restart_and_watch() {
 }
 
 #[test]
+fn test_process_state_failed_serde() {
+    let state = ProcessState::Failed;
+    let json = serde_json::to_string(&state).unwrap();
+    assert_eq!(json, r#""failed""#);
+    let parsed: ProcessState = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, ProcessState::Failed);
+}
+
+#[test]
+fn test_process_state_unknown_for_future_states() {
+    let json = r#""somefuturestate""#;
+    let parsed: ProcessState = serde_json::from_str(json).unwrap();
+    assert_eq!(parsed, ProcessState::Unknown);
+}
+
+#[test]
+fn test_process_state_existing_variants_unchanged() {
+    let running: ProcessState = serde_json::from_str(r#""running""#).unwrap();
+    assert_eq!(running, ProcessState::Running);
+    let exited: ProcessState = serde_json::from_str(r#""exited""#).unwrap();
+    assert_eq!(exited, ProcessState::Exited);
+}
+
+#[test]
 fn test_run_request_without_restart_watch_backward_compat() {
     // Old-style Run request without restart/watch fields should parse fine
     let json = r#"{"type":"Run","command":"ls","name":null,"cwd":null,"env":null,"port":null}"#;

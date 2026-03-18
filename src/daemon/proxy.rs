@@ -236,6 +236,8 @@ async fn status_page(handle: &PmHandle, proxy_port: u16) -> HyperResponse<BoxBod
                 let state_str = match p.state {
                     ProcessState::Running => "running",
                     ProcessState::Exited => "exited",
+                    ProcessState::Failed => "FAILED",
+                    ProcessState::Unknown => "unknown",
                 };
                 use std::fmt::Write;
                 if let Some(port) = p.port {

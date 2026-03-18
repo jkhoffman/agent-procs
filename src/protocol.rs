@@ -227,11 +227,28 @@ pub struct ProcessInfo {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProcessState {
     Running,
     Exited,
+    Failed,
+    Unknown,
+}
+
+impl<'de> serde::Deserialize<'de> for ProcessState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "running" => Self::Running,
+            "exited" => Self::Exited,
+            "failed" => Self::Failed,
+            _ => Self::Unknown,
+        })
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]

@@ -461,6 +461,13 @@ impl App {
             .filter(|p| p.state == crate::protocol::ProcessState::Exited)
             .count()
     }
+
+    pub fn failed_count(&self) -> usize {
+        self.processes
+            .iter()
+            .filter(|p| p.state == crate::protocol::ProcessState::Failed)
+            .count()
+    }
 }
 
 #[cfg(test)]

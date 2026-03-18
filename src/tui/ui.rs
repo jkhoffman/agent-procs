@@ -49,6 +49,8 @@ fn draw_process_list(frame: &mut Frame, app: &App, area: Rect) {
                         );
                     }
                 }
+                ProcessState::Failed => ("⟳", Style::default().fg(Color::Yellow)),
+                ProcessState::Unknown => ("?", Style::default().fg(Color::DarkGray)),
             };
 
             let text = format!("{} {}", indicator, p.name);
