@@ -44,6 +44,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Actor stores a self-sender for scheduling delayed `AutoRestart` commands.
 - `stop` sets `manually_stopped` flag; `restart` clears it along with
   `restart_count` and `failed`.
+- Filtered disk scrollback incrementally updates as new output arrives
+  (previously required re-entering the filter to see new matches).
+
+### Fixed
+
+- Restart annotation now shows the actual exit code instead of always
+  reporting "signal" (exit code was being read after `respawn_in_place()`
+  replaced the process record).
+- Auto-restart no longer drops the file watcher — `setup_watcher()` is
+  called after successful crash-triggered restarts.
+- Manual `restart` (CLI and TUI `r`) preserves `restart_policy` and
+  `watch_config` on the new process record and recreates the file watcher.
+- Watcher setup failures (bad globs, OS errors) now clear `watch_config`
+  so status/TUI don't falsely report the process as watched, and write a
+  `[agent-procs] Watch setup failed` supervisor annotation to the log.
 
 ## [0.5.1] - 2026-03-17
 
