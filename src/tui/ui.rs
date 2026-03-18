@@ -53,7 +53,22 @@ fn draw_process_list(frame: &mut Frame, app: &App, area: Rect) {
                 ProcessState::Unknown => ("?", Style::default().fg(Color::DarkGray)),
             };
 
-            let text = format!("{} {}", indicator, p.name);
+            // Build label with restart count and watch indicator
+            let mut label = p.name.clone();
+            if let Some(count) = p.restart_count
+                && count > 0
+            {
+                if let Some(max) = p.max_restarts {
+                    label = format!("{} ({}/{}↻)", label, count, max);
+                } else {
+                    label = format!("{} ({}↻)", label, count);
+                }
+            }
+            if p.watched == Some(true) {
+                label = format!("{} W", label);
+            }
+
+            let text = format!("{} {}", indicator, label);
             let style = if i == app.selected {
                 style.bg(Color::DarkGray)
             } else {
@@ -202,11 +217,21 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         " ↑↓ select  r restart  x stop  X stop-all  e stream  Space pause  u/d scroll  / filter  q quit  Q down ".to_string()
     };
 
-    let counts = format!(
-        " {} running, {} exited ",
-        app.running_count(),
-        app.exited_count()
-    );
+    let failed = app.failed_count();
+    let counts = if failed > 0 {
+        format!(
+            " {} running, {} failed, {} exited ",
+            app.running_count(),
+            failed,
+            app.exited_count()
+        )
+    } else {
+        format!(
+            " {} running, {} exited ",
+            app.running_count(),
+            app.exited_count()
+        )
+    };
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
