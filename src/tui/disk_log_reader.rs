@@ -28,6 +28,8 @@ struct SegmentCache {
 /// How long to cache segment enumerations before re-probing the filesystem.
 const SEGMENT_CACHE_TTL_MS: u128 = 500;
 
+use crate::tui::app::StreamMode;
+
 /// Provides random-access line reading from disk log files using the sidecar
 /// `.idx` index.  Handles rotated files (`.1`, `.2`, ...) transparently.
 pub struct DiskLogReader {
@@ -140,6 +142,107 @@ impl DiskLogReader {
         }
 
         Ok(result)
+    }
+
+    /// Scan all lines in the given stream mode and return indices of lines
+    /// matching the filter substring. The returned indices are positions within
+    /// the mode's address space (single-stream or interleaved).
+    pub fn scan_matching_lines(&mut self, filter: &str, mode: StreamMode) -> Vec<usize> {
+        match mode {
+            StreamMode::Stdout => self.scan_single_stream(filter, LineSource::Stdout),
+            StreamMode::Stderr => self.scan_single_stream(filter, LineSource::Stderr),
+            StreamMode::Both => self.scan_interleaved(filter),
+        }
+    }
+
+    fn scan_single_stream(&mut self, filter: &str, source: LineSource) -> Vec<usize> {
+        let total = self.line_count(source);
+        if total == 0 {
+            return Vec::new();
+        }
+        let mut matching = Vec::new();
+        // Read in chunks to avoid massive single reads
+        const CHUNK: usize = 1000;
+        let mut offset = 0;
+        while offset < total {
+            let count = CHUNK.min(total - offset);
+            if let Ok(lines) = self.read_lines(source, offset, count) {
+                for (i, line) in lines.iter().enumerate() {
+                    if line.contains(filter) {
+                        matching.push(offset + i);
+                    }
+                }
+            }
+            offset += count;
+        }
+        matching
+    }
+
+    fn scan_interleaved(&mut self, filter: &str) -> Vec<usize> {
+        let total = self.line_count_both();
+        if total == 0 {
+            return Vec::new();
+        }
+        let mut matching = Vec::new();
+        const CHUNK: usize = 1000;
+        let mut offset = 0;
+        while offset < total {
+            let count = CHUNK.min(total - offset);
+            if let Ok(lines) = self.read_interleaved(offset, count) {
+                for (i, (_, line)) in lines.iter().enumerate() {
+                    if line.contains(filter) {
+                        matching.push(offset + i);
+                    }
+                }
+            }
+            offset += count;
+        }
+        matching
+    }
+
+    /// Read specific non-contiguous lines by index within the given mode's
+    /// address space. Used by filtered scrollback to render only matching lines.
+    pub fn read_scattered_lines(
+        &mut self,
+        mode: StreamMode,
+        line_numbers: &[usize],
+    ) -> Vec<(LineSource, String)> {
+        if line_numbers.is_empty() {
+            return Vec::new();
+        }
+        match mode {
+            StreamMode::Stdout | StreamMode::Stderr => {
+                let source = if mode == StreamMode::Stdout {
+                    LineSource::Stdout
+                } else {
+                    LineSource::Stderr
+                };
+                let mut result = Vec::with_capacity(line_numbers.len());
+                for &ln in line_numbers {
+                    if let Ok(lines) = self.read_lines(source, ln, 1)
+                        && let Some(line) = lines.into_iter().next()
+                    {
+                        result.push((source, line));
+                        continue;
+                    }
+                    result.push((source, String::new()));
+                }
+                result
+            }
+            StreamMode::Both => {
+                let mut result = Vec::with_capacity(line_numbers.len());
+                for &ln in line_numbers {
+                    if let Ok(lines) = self.read_interleaved(ln, 1)
+                        && let Some(entry) = lines.into_iter().next()
+                    {
+                        result.push(entry);
+                        continue;
+                    }
+                    result.push((LineSource::Stdout, String::new()));
+                }
+                result
+            }
+        }
     }
 
     /// Build merged index: all lines from both streams sorted by sequence number.
@@ -469,6 +572,93 @@ mod tests {
 
         let lines = reader.read_lines(LineSource::Stdout, 1, 2).unwrap();
         assert_eq!(lines, vec!["bbb", "ccc"]);
+    }
+
+    #[test]
+    fn test_scan_matching_lines_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        create_log_with_index(
+            dir.path(),
+            "test.stdout",
+            &[
+                "hello world",
+                "goodbye world",
+                "hello again",
+                "foo bar",
+                "hello!",
+            ],
+            0,
+        );
+
+        let mut reader = DiskLogReader::new(dir.path().to_path_buf(), "test".to_string());
+        let matches = reader.scan_matching_lines("hello", StreamMode::Stdout);
+        assert_eq!(matches, vec![0, 2, 4]);
+
+        let matches = reader.scan_matching_lines("world", StreamMode::Stdout);
+        assert_eq!(matches, vec![0, 1]);
+
+        let matches = reader.scan_matching_lines("nonexistent", StreamMode::Stdout);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_scan_matching_lines_both() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // stdout: seq 0, 2
+        let stdout_content = "out-hello\nout-world\n";
+        std::fs::write(dir.path().join("test.stdout"), stdout_content).unwrap();
+        let idx_path = idx_path_for(&dir.path().join("test.stdout"));
+        let mut writer = IndexWriter::create(&idx_path, 0).unwrap();
+        writer
+            .append(IndexRecord {
+                byte_offset: 0,
+                seq: 0,
+            })
+            .unwrap();
+        writer
+            .append(IndexRecord {
+                byte_offset: 10,
+                seq: 2,
+            })
+            .unwrap();
+        writer.flush().unwrap();
+
+        // stderr: seq 1
+        let stderr_content = "err-hello\n";
+        std::fs::write(dir.path().join("test.stderr"), stderr_content).unwrap();
+        let idx_path = idx_path_for(&dir.path().join("test.stderr"));
+        let mut writer = IndexWriter::create(&idx_path, 1).unwrap();
+        writer
+            .append(IndexRecord {
+                byte_offset: 0,
+                seq: 1,
+            })
+            .unwrap();
+        writer.flush().unwrap();
+
+        let mut reader = DiskLogReader::new(dir.path().to_path_buf(), "test".to_string());
+        // Interleaved: [out-hello(0), err-hello(1), out-world(2)]
+        let matches = reader.scan_matching_lines("hello", StreamMode::Both);
+        assert_eq!(matches, vec![0, 1]); // indices in interleaved space
+    }
+
+    #[test]
+    fn test_read_scattered_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        create_log_with_index(
+            dir.path(),
+            "test.stdout",
+            &["line0", "line1", "line2", "line3", "line4"],
+            0,
+        );
+
+        let mut reader = DiskLogReader::new(dir.path().to_path_buf(), "test".to_string());
+        let result = reader.read_scattered_lines(StreamMode::Stdout, &[0, 2, 4]);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], (LineSource::Stdout, "line0".to_string()));
+        assert_eq!(result[1], (LineSource::Stdout, "line2".to_string()));
+        assert_eq!(result[2], (LineSource::Stdout, "line4".to_string()));
     }
 
     #[test]
