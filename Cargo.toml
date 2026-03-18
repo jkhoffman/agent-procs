@@ -35,6 +35,8 @@ http-body-util = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 ansi-to-tui = "7.0.0"
+notify = "7"
+globset = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

@@ -50,6 +50,7 @@ pub struct ManagedProcess {
     pub failed: bool,
     pub supervisor_tx: Option<tokio::sync::mpsc::Sender<String>>,
     pub capture_handles: Vec<tokio::task::JoinHandle<()>>,
+    pub watch_handle: Option<crate::daemon::watcher::WatchHandle>,
 }
 
 pub struct ProcessManager {
@@ -256,6 +257,7 @@ impl ProcessManager {
                 failed: false,
                 supervisor_tx: Some(sup_tx),
                 capture_handles,
+                watch_handle: None,
             },
         );
 
@@ -649,6 +651,7 @@ impl ProcessManager {
                         failed: true,
                         supervisor_tx: None,
                         capture_handles: Vec::new(),
+                        watch_handle: None,
                     },
                 );
                 Err(message)

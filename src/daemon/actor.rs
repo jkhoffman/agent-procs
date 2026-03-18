@@ -67,6 +67,10 @@ enum PmCommand {
     AutoRestart {
         name: String,
     },
+    /// Internal: file watcher triggered restart.
+    WatchRestart {
+        name: String,
+    },
 }
 
 fn actor_error(msg: &str) -> Response {
@@ -323,11 +327,16 @@ impl ProcessManagerActor {
                     .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port)
                     .await;
                 // Attach restart/watch config if spawn succeeded
+                let has_watch = watch.is_some();
                 if let Response::RunOk { ref name, .. } = resp
                     && let Some(p) = self.pm.find_mut(name)
                 {
                     p.restart_policy = restart;
                     p.watch_config = watch;
+                }
+                // Set up file watcher if watch config present
+                if has_watch && let Response::RunOk { ref name, .. } = resp {
+                    self.setup_watcher(name);
                 }
                 if let Response::RunOk {
                     ref name,
@@ -343,6 +352,10 @@ impl ProcessManagerActor {
                 let _ = reply.send(resp);
             }
             PmCommand::Stop { target, reply } => {
+                // Tear down watcher on stop
+                if let Some(p) = self.pm.find_mut(&target) {
+                    p.watch_handle = None;
+                }
                 let resp = self.pm.stop_process(&target).await;
                 self.publish_proxy_state();
                 let _ = reply.send(resp);
@@ -387,6 +400,9 @@ impl ProcessManagerActor {
             }
             PmCommand::AutoRestart { name } => {
                 self.handle_auto_restart(&name).await;
+            }
+            PmCommand::WatchRestart { name } => {
+                self.handle_watch_restart(&name).await;
             }
         }
     }
@@ -449,6 +465,97 @@ impl ProcessManagerActor {
             p.restart_pending = false;
         }
         self.publish_proxy_state();
+    }
+
+    async fn handle_watch_restart(&mut self, name: &str) {
+        let should_restart = self.pm.find(name).is_some_and(|p| !p.manually_stopped);
+        if !should_restart {
+            return;
+        }
+
+        // Stop process (without manually_stopped)
+        if self.pm.find(name).is_some_and(|p| p.child.is_some()) {
+            let _ = self.pm.stop_process(name).await;
+            // Clear manually_stopped (stop_process sets it)
+            if let Some(p) = self.pm.find_mut(name) {
+                p.manually_stopped = false;
+            }
+        }
+
+        // Reset restart count (watch restarts are intentional)
+        if let Some(p) = self.pm.find_mut(name) {
+            p.restart_count = 0;
+            p.failed = false;
+        }
+
+        // Respawn
+        match self.pm.respawn_in_place(name).await {
+            Ok(()) => {
+                if let Some(p) = self.pm.find(name)
+                    && let Some(tx) = &p.supervisor_tx
+                {
+                    let _ = tx
+                        .send("[agent-procs] File changed, restarted".to_string())
+                        .await;
+                }
+                // Recreate watcher for the new process
+                self.setup_watcher(name);
+            }
+            Err(err) => {
+                let _ = self.pm.output_tx.send(OutputLine {
+                    process: name.to_string(),
+                    stream: ProtoStream::Stdout,
+                    line: format!("[agent-procs] Watch restart failed: {}", err),
+                });
+            }
+        }
+
+        self.publish_proxy_state();
+    }
+
+    /// Set up a file watcher for a process if it has a `WatchConfig`.
+    fn setup_watcher(&mut self, name: &str) {
+        let (paths, ignore, cwd) = {
+            let Some(p) = self.pm.find(name) else { return };
+            let Some(ref wc) = p.watch_config else { return };
+            (
+                wc.paths.clone(),
+                wc.ignore.clone(),
+                p.cwd.clone().unwrap_or_else(|| ".".to_string()),
+            )
+        };
+
+        let base_dir = std::path::PathBuf::from(&cwd);
+        let ignore_refs: Option<Vec<String>> = ignore;
+        let ignore_slice = ignore_refs.as_deref();
+
+        let tx = self.self_tx.clone();
+        let proc_name = name.to_string();
+        let (restart_tx, mut restart_rx) = tokio::sync::mpsc::channel::<String>(16);
+
+        // Forward watch events to PmCommand::WatchRestart
+        tokio::spawn(async move {
+            while let Some(name) = restart_rx.recv().await {
+                let _ = tx.send(PmCommand::WatchRestart { name }).await;
+            }
+        });
+
+        match crate::daemon::watcher::create_watcher(
+            &paths,
+            ignore_slice,
+            &base_dir,
+            proc_name,
+            restart_tx,
+        ) {
+            Ok(handle) => {
+                if let Some(p) = self.pm.find_mut(name) {
+                    p.watch_handle = Some(handle);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(process = %name, error = %e, "failed to create file watcher");
+            }
+        }
     }
 
     /// Build a status response with proxy URL rewriting applied.

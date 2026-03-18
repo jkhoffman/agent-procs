@@ -18,3 +18,4 @@ pub mod proxy;
 pub mod server;
 pub mod spawn;
 pub mod wait_engine;
+pub mod watcher;
