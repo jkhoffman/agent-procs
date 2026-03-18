@@ -47,6 +47,11 @@ fn bench_startup_order(c: &mut Criterion) {
                 ready: None,
                 depends_on: deps,
                 port: None,
+                autorestart: None,
+                max_restarts: None,
+                restart_delay: None,
+                watch: None,
+                watch_ignore: None,
             },
         );
     }
