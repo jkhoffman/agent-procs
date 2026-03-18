@@ -335,8 +335,19 @@ impl ProcessManagerActor {
                     p.watch_config = watch;
                 }
                 // Set up file watcher if watch config present
-                if has_watch && let Response::RunOk { ref name, .. } = resp {
-                    self.setup_watcher(name);
+                if has_watch
+                    && let Response::RunOk { ref name, .. } = resp
+                    && let Err(e) = self.setup_watcher(name)
+                {
+                    // Process started but watcher failed — annotate the log.
+                    // setup_watcher already cleared watch_config so status won't
+                    // falsely report the process as watched.
+                    let msg = format!("[agent-procs] Watch setup failed: {}", e);
+                    if let Some(p) = self.pm.find(name)
+                        && let Some(tx) = &p.supervisor_tx
+                    {
+                        let _ = tx.try_send(msg);
+                    }
                 }
                 if let Response::RunOk {
                     ref name,
@@ -367,6 +378,10 @@ impl ProcessManagerActor {
             }
             PmCommand::Restart { target, reply } => {
                 let resp = self.pm.restart_process(&target).await;
+                // Recreate file watcher if watch config was preserved
+                if let Response::RunOk { ref name, .. } = resp {
+                    let _ = self.setup_watcher(name);
+                }
                 self.publish_proxy_state();
                 let _ = reply.send(resp);
             }
@@ -450,7 +465,7 @@ impl ProcessManagerActor {
                 }
                 // Recreate file watcher for the new process (old one was
                 // dropped when respawn_in_place removed the process record)
-                self.setup_watcher(name);
+                let _ = self.setup_watcher(name);
             }
             Err(err) => {
                 // Broadcast failure (live only)
@@ -502,7 +517,7 @@ impl ProcessManagerActor {
                         .await;
                 }
                 // Recreate watcher for the new process
-                self.setup_watcher(name);
+                let _ = self.setup_watcher(name);
             }
             Err(err) => {
                 let _ = self.pm.output_tx.send(OutputLine {
@@ -517,10 +532,16 @@ impl ProcessManagerActor {
     }
 
     /// Set up a file watcher for a process if it has a `WatchConfig`.
-    fn setup_watcher(&mut self, name: &str) {
+    /// Returns `Err` with an error message if the watcher could not be created.
+    /// On failure, clears `watch_config` so status/TUI don't report a phantom watcher.
+    fn setup_watcher(&mut self, name: &str) -> Result<(), String> {
         let (paths, ignore, cwd) = {
-            let Some(p) = self.pm.find(name) else { return };
-            let Some(ref wc) = p.watch_config else { return };
+            let Some(p) = self.pm.find(name) else {
+                return Ok(());
+            };
+            let Some(ref wc) = p.watch_config else {
+                return Ok(());
+            };
             (
                 wc.paths.clone(),
                 wc.ignore.clone(),
@@ -554,9 +575,15 @@ impl ProcessManagerActor {
                 if let Some(p) = self.pm.find_mut(name) {
                     p.watch_handle = Some(handle);
                 }
+                Ok(())
             }
             Err(e) => {
                 tracing::warn!(process = %name, error = %e, "failed to create file watcher");
+                // Clear watch_config so status/TUI don't report as watched
+                if let Some(p) = self.pm.find_mut(name) {
+                    p.watch_config = None;
+                }
+                Err(e)
             }
         }
     }

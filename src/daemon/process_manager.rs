@@ -332,13 +332,16 @@ impl ProcessManager {
     }
 
     pub async fn restart_process(&mut self, target: &str) -> Response {
-        let (command, name, cwd, env, port) = match self.find(target) {
+        let (command, name, cwd, env, port, restart_policy, watch_config) = match self.find(target)
+        {
             Some(p) => (
                 p.command.clone(),
                 p.name.clone(),
                 p.cwd.clone(),
                 p.env.clone(),
                 p.port,
+                p.restart_policy.clone(),
+                p.watch_config.clone(),
             ),
             None => {
                 return Response::Error {
@@ -357,8 +360,23 @@ impl ProcessManager {
         let _ = self.stop_process(target).await;
         self.processes.remove(&name);
         let env = if env.is_empty() { None } else { Some(env) };
-        self.spawn_process(&command, Some(name), cwd.as_deref(), env.as_ref(), port)
-            .await
+        let resp = self
+            .spawn_process(
+                &command,
+                Some(name.clone()),
+                cwd.as_deref(),
+                env.as_ref(),
+                port,
+            )
+            .await;
+        // Re-attach restart/watch config so manual restart preserves supervisor behavior
+        if let Response::RunOk { .. } = resp
+            && let Some(p) = self.find_mut(&name)
+        {
+            p.restart_policy = restart_policy;
+            p.watch_config = watch_config;
+        }
+        resp
     }
 
     pub fn enable_proxy(&mut self) {

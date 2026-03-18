@@ -148,22 +148,37 @@ impl DiskLogReader {
     /// matching the filter substring. The returned indices are positions within
     /// the mode's address space (single-stream or interleaved).
     pub fn scan_matching_lines(&mut self, filter: &str, mode: StreamMode) -> Vec<usize> {
+        self.scan_matching_lines_from(filter, mode, 0)
+    }
+
+    /// Scan lines starting from `start_from` in the given stream mode.
+    /// Returns indices of matching lines and can be used for incremental updates.
+    pub fn scan_matching_lines_from(
+        &mut self,
+        filter: &str,
+        mode: StreamMode,
+        start_from: usize,
+    ) -> Vec<usize> {
         match mode {
-            StreamMode::Stdout => self.scan_single_stream(filter, LineSource::Stdout),
-            StreamMode::Stderr => self.scan_single_stream(filter, LineSource::Stderr),
-            StreamMode::Both => self.scan_interleaved(filter),
+            StreamMode::Stdout => self.scan_single_stream(filter, LineSource::Stdout, start_from),
+            StreamMode::Stderr => self.scan_single_stream(filter, LineSource::Stderr, start_from),
+            StreamMode::Both => self.scan_interleaved(filter, start_from),
         }
     }
 
-    fn scan_single_stream(&mut self, filter: &str, source: LineSource) -> Vec<usize> {
+    fn scan_single_stream(
+        &mut self,
+        filter: &str,
+        source: LineSource,
+        start_from: usize,
+    ) -> Vec<usize> {
         let total = self.line_count(source);
-        if total == 0 {
+        if total <= start_from {
             return Vec::new();
         }
         let mut matching = Vec::new();
-        // Read in chunks to avoid massive single reads
         const CHUNK: usize = 1000;
-        let mut offset = 0;
+        let mut offset = start_from;
         while offset < total {
             let count = CHUNK.min(total - offset);
             if let Ok(lines) = self.read_lines(source, offset, count) {
@@ -178,14 +193,14 @@ impl DiskLogReader {
         matching
     }
 
-    fn scan_interleaved(&mut self, filter: &str) -> Vec<usize> {
+    fn scan_interleaved(&mut self, filter: &str, start_from: usize) -> Vec<usize> {
         let total = self.line_count_both();
-        if total == 0 {
+        if total <= start_from {
             return Vec::new();
         }
         let mut matching = Vec::new();
         const CHUNK: usize = 1000;
-        let mut offset = 0;
+        let mut offset = start_from;
         while offset < total {
             let count = CHUNK.min(total - offset);
             if let Ok(lines) = self.read_interleaved(offset, count) {

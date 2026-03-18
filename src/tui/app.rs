@@ -96,9 +96,7 @@ pub struct FilteredIndex {
     pub stream_mode: StreamMode,
     /// Line indices (in the stream mode's address space) that match the filter.
     pub matching_lines: Vec<usize>,
-    /// Number of disk lines scanned so far.
-    /// TODO: use this for incremental updates in `push_output()` so new lines
-    /// matching the filter appear without re-entering the filter.
+    /// Number of disk lines scanned so far (for incremental updates).
     pub scanned_up_to: usize,
 }
 
@@ -552,6 +550,42 @@ impl App {
             Stream::Stderr => LineSource::Stderr,
         };
         buf.push(source, line.to_string());
+
+        // Incrementally update filtered index if a filter is active
+        if self.filter.is_some() {
+            self.update_filtered_index(process);
+        }
+    }
+
+    /// Scan new disk lines since last scan and append matches to the filtered index.
+    fn update_filtered_index(&mut self, process: &str) {
+        let Some(fi) = self.filtered_indices.get(process) else {
+            return;
+        };
+        let filter = fi.filter.clone();
+        let mode = fi.stream_mode;
+        let scanned_up_to = fi.scanned_up_to;
+
+        let reader = match self.disk_readers.get_mut(process) {
+            Some(r) => r,
+            None => return,
+        };
+
+        let current_total = match mode {
+            StreamMode::Stdout => reader.line_count(LineSource::Stdout),
+            StreamMode::Stderr => reader.line_count(LineSource::Stderr),
+            StreamMode::Both => reader.line_count_both(),
+        };
+
+        if current_total <= scanned_up_to {
+            return;
+        }
+
+        let new_matches = reader.scan_matching_lines_from(&filter, mode, scanned_up_to);
+
+        let fi = self.filtered_indices.get_mut(process).unwrap();
+        fi.matching_lines.extend(new_matches);
+        fi.scanned_up_to = current_total;
     }
 
     pub fn quit(&mut self) {
