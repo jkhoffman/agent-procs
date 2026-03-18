@@ -100,6 +100,44 @@ fn test_config_proxy_fields_backward_compat() {
 }
 
 #[test]
+fn test_parse_config_with_restart_and_watch() {
+    let yaml = r#"
+processes:
+  server:
+    cmd: "npm start"
+    autorestart: on-failure
+    max_restarts: 5
+    restart_delay: 2000
+    watch:
+      - "src/**"
+      - "config/*"
+    watch_ignore:
+      - "*.generated.ts"
+"#;
+    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let server = &config.processes["server"];
+    assert_eq!(server.autorestart.as_deref(), Some("on-failure"));
+    assert_eq!(server.max_restarts, Some(5));
+    assert_eq!(server.restart_delay, Some(2000));
+    assert_eq!(server.watch.as_ref().unwrap().len(), 2);
+    assert_eq!(server.watch_ignore.as_ref().unwrap().len(), 1);
+}
+
+#[test]
+fn test_parse_config_backward_compat_no_restart_fields() {
+    let yaml = r#"
+processes:
+  db:
+    cmd: "pg_ctl start"
+"#;
+    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let db = &config.processes["db"];
+    assert!(db.autorestart.is_none());
+    assert!(db.max_restarts.is_none());
+    assert!(db.watch.is_none());
+}
+
+#[test]
 fn test_discover_config_returns_none() {
     let tmp = TempDir::new().unwrap();
     assert_eq!(discover_config(tmp.path()), None);

@@ -47,6 +47,11 @@ fn bench_startup_order(c: &mut Criterion) {
                 ready: None,
                 depends_on: deps,
                 port: None,
+                autorestart: None,
+                max_restarts: None,
+                restart_delay: None,
+                watch: None,
+                watch_ignore: None,
             },
         );
     }
@@ -77,6 +82,8 @@ fn bench_protocol_serde(c: &mut Criterion) {
             cwd: Some("/app".into()),
             env: Some(HashMap::from([("PORT".into(), "3000".into())])),
             port: Some(3000),
+            restart: None,
+            watch: None,
         },
         Request::Logs {
             target: Some("api".into()),

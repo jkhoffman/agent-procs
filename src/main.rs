@@ -85,6 +85,21 @@ enum Commands {
         /// Enable reverse proxy for this session
         #[arg(long)]
         proxy: bool,
+        /// Auto-restart policy: always, on-failure, or never
+        #[arg(long)]
+        autorestart: Option<String>,
+        /// Maximum number of restarts (unlimited if omitted)
+        #[arg(long)]
+        max_restarts: Option<u32>,
+        /// Delay between crash and restart in milliseconds
+        #[arg(long)]
+        restart_delay: Option<u64>,
+        /// File glob patterns to watch for changes (repeatable)
+        #[arg(long)]
+        watch: Vec<String>,
+        /// Glob patterns to ignore when watching (repeatable)
+        #[arg(long)]
+        watch_ignore: Vec<String>,
     },
     /// Stop a process
     #[command(display_order = 2)]
@@ -213,7 +228,26 @@ async fn main() {
             name,
             port,
             proxy,
-        } => agent_procs::cli::run::execute(session, &command, name, port, proxy).await,
+            autorestart,
+            max_restarts,
+            restart_delay,
+            watch,
+            watch_ignore,
+        } => {
+            agent_procs::cli::run::execute(
+                session,
+                &command,
+                name,
+                port,
+                proxy,
+                autorestart,
+                max_restarts,
+                restart_delay,
+                watch,
+                watch_ignore,
+            )
+            .await
+        }
         Commands::Stop { target } => agent_procs::cli::stop::execute(session, &target).await,
         Commands::StopAll => agent_procs::cli::stop::execute_all(session).await,
         Commands::Restart { target } => agent_procs::cli::restart::execute(session, &target).await,

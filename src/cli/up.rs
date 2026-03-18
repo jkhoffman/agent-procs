@@ -1,6 +1,6 @@
 use crate::cli;
 use crate::config::{load_config, resolve_session};
-use crate::protocol::{Request, Response};
+use crate::protocol::{Request, Response, RestartPolicy, WatchConfig};
 use futures::future::join_all;
 
 pub async fn execute(
@@ -70,12 +70,26 @@ pub async fn execute(
                     Some(def.env.clone())
                 };
 
+                let restart = def
+                    .autorestart
+                    .as_ref()
+                    .map(|m| RestartPolicy::from_args(m, def.max_restarts, def.restart_delay));
+
+                let watch = def.watch.as_ref().and_then(|paths| {
+                    WatchConfig::from_args(
+                        paths.clone(),
+                        def.watch_ignore.clone().unwrap_or_default(),
+                    )
+                });
+
                 let req = Request::Run {
                     command: def.cmd.clone(),
                     name: Some((*name).clone()),
                     cwd: resolved_cwd,
                     env,
                     port: def.port,
+                    restart,
+                    watch,
                 };
                 let name = (*name).clone();
                 async move {

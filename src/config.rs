@@ -36,6 +36,16 @@ pub struct ProcessDef {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub port: Option<u16>,
+    #[serde(default)]
+    pub autorestart: Option<String>,
+    #[serde(default)]
+    pub max_restarts: Option<u32>,
+    #[serde(default)]
+    pub restart_delay: Option<u64>,
+    #[serde(default)]
+    pub watch: Option<Vec<String>>,
+    #[serde(default)]
+    pub watch_ignore: Option<Vec<String>>,
 }
 
 impl ProjectConfig {
@@ -56,10 +66,14 @@ impl ProjectConfig {
     ///         ("db".into(), ProcessDef {
     ///             cmd: "pg".into(), cwd: None, env: HashMap::new(),
     ///             ready: None, depends_on: vec![], port: None,
+    ///             autorestart: None, max_restarts: None, restart_delay: None,
+    ///             watch: None, watch_ignore: None,
     ///         }),
     ///         ("api".into(), ProcessDef {
     ///             cmd: "node".into(), cwd: None, env: HashMap::new(),
     ///             ready: None, depends_on: vec!["db".into()], port: None,
+    ///             autorestart: None, max_restarts: None, restart_delay: None,
+    ///             watch: None, watch_ignore: None,
     ///         }),
     ///     ]),
     ///     proxy: None,
@@ -175,6 +189,11 @@ mod tests {
             ready: None,
             depends_on: depends_on.into_iter().map(String::from).collect(),
             port: None,
+            autorestart: None,
+            max_restarts: None,
+            restart_delay: None,
+            watch: None,
+            watch_ignore: None,
         }
     }
 

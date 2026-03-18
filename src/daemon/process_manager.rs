@@ -2,7 +2,8 @@ use crate::daemon::log_writer::{self, OutputLine};
 use crate::daemon::port_allocator::PortAllocator;
 use crate::paths;
 use crate::protocol::{
-    ErrorCode, ProcessInfo, ProcessState, Response, Stream as ProtoStream, process_url,
+    ErrorCode, ProcessInfo, ProcessState, Response, RestartMode, RestartPolicy,
+    Stream as ProtoStream, WatchConfig, process_url,
 };
 use crate::session::IdCounter;
 use std::collections::HashMap;
@@ -40,6 +41,16 @@ pub struct ManagedProcess {
     pub started_at: Instant,
     pub exit_code: Option<i32>,
     pub port: Option<u16>,
+    // Supervisor fields
+    pub restart_policy: Option<RestartPolicy>,
+    pub watch_config: Option<WatchConfig>,
+    pub restart_count: u32,
+    pub manually_stopped: bool,
+    pub restart_pending: bool,
+    pub failed: bool,
+    pub supervisor_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    pub capture_handles: Vec<tokio::task::JoinHandle<()>>,
+    pub watch_handle: Option<crate::daemon::watcher::WatchHandle>,
 }
 
 pub struct ProcessManager {
@@ -175,12 +186,19 @@ impl ProcessManager {
         let seq_counter = Arc::new(AtomicU64::new(0));
 
         // Spawn output capture tasks via log_writer
+        // Supervisor channel: stdout gets the real sender, stderr gets a dummy
+        let (sup_tx, sup_rx_stdout) = tokio::sync::mpsc::channel::<String>(16);
+        let (stderr_sup_sender, sup_rx_stderr) = tokio::sync::mpsc::channel::<String>(16);
+        drop(stderr_sup_sender);
+
+        let mut capture_handles = Vec::new();
+
         if let Some(stdout) = child.stdout.take() {
             let tx = self.output_tx.clone();
             let pname = name.clone();
             let path = log_dir.join(format!("{}.stdout", name));
             let seq = Arc::clone(&seq_counter);
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 log_writer::capture_output(
                     stdout,
                     &path,
@@ -190,16 +208,18 @@ impl ProcessManager {
                     DEFAULT_MAX_LOG_BYTES,
                     log_writer::DEFAULT_MAX_ROTATED_FILES,
                     seq,
+                    sup_rx_stdout,
                 )
                 .await;
             });
+            capture_handles.push(handle);
         }
         if let Some(stderr) = child.stderr.take() {
             let tx = self.output_tx.clone();
             let pname = name.clone();
             let path = log_dir.join(format!("{}.stderr", name));
             let seq = Arc::clone(&seq_counter);
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 log_writer::capture_output(
                     stderr,
                     &path,
@@ -209,9 +229,11 @@ impl ProcessManager {
                     DEFAULT_MAX_LOG_BYTES,
                     log_writer::DEFAULT_MAX_ROTATED_FILES,
                     seq,
+                    sup_rx_stderr,
                 )
                 .await;
             });
+            capture_handles.push(handle);
         }
 
         self.processes.insert(
@@ -227,6 +249,15 @@ impl ProcessManager {
                 started_at: Instant::now(),
                 exit_code: None,
                 port: resolved_port,
+                restart_policy: None,
+                watch_config: None,
+                restart_count: 0,
+                manually_stopped: false,
+                restart_pending: false,
+                failed: false,
+                supervisor_tx: Some(sup_tx),
+                capture_handles,
+                watch_handle: None,
             },
         );
 
@@ -250,6 +281,8 @@ impl ProcessManager {
                 };
             }
         };
+
+        proc.manually_stopped = true;
 
         if let Some(ref child) = proc.child {
             let raw_pid = child.id().unwrap_or(0) as i32;
@@ -299,13 +332,16 @@ impl ProcessManager {
     }
 
     pub async fn restart_process(&mut self, target: &str) -> Response {
-        let (command, name, cwd, env, port) = match self.find(target) {
+        let (command, name, cwd, env, port, restart_policy, watch_config) = match self.find(target)
+        {
             Some(p) => (
                 p.command.clone(),
                 p.name.clone(),
                 p.cwd.clone(),
                 p.env.clone(),
                 p.port,
+                p.restart_policy.clone(),
+                p.watch_config.clone(),
             ),
             None => {
                 return Response::Error {
@@ -314,11 +350,33 @@ impl ProcessManager {
                 };
             }
         };
+        // Clear supervisor flags — restart is intentional
+        if let Some(p) = self.find_mut(target) {
+            p.manually_stopped = false;
+            p.restart_count = 0;
+            p.failed = false;
+            p.restart_pending = false;
+        }
         let _ = self.stop_process(target).await;
         self.processes.remove(&name);
         let env = if env.is_empty() { None } else { Some(env) };
-        self.spawn_process(&command, Some(name), cwd.as_deref(), env.as_ref(), port)
-            .await
+        let resp = self
+            .spawn_process(
+                &command,
+                Some(name.clone()),
+                cwd.as_deref(),
+                env.as_ref(),
+                port,
+            )
+            .await;
+        // Re-attach restart/watch config so manual restart preserves supervisor behavior
+        if let Response::RunOk { .. } = resp
+            && let Some(p) = self.find_mut(&name)
+        {
+            p.restart_policy = restart_policy;
+            p.watch_config = watch_config;
+        }
+        resp
     }
 
     pub fn enable_proxy(&mut self) {
@@ -401,6 +459,8 @@ impl ProcessManager {
                 pid: p.pid,
                 state: if p.child.is_some() {
                     ProcessState::Running
+                } else if p.failed {
+                    ProcessState::Failed
                 } else {
                     ProcessState::Exited
                 },
@@ -413,23 +473,174 @@ impl ProcessManager {
                 command: p.command.clone(),
                 port: p.port,
                 url: p.port.map(|port| process_url(&p.name, port, None)),
+                restart_count: if p.restart_count > 0 {
+                    Some(p.restart_count)
+                } else {
+                    None
+                },
+                max_restarts: p.restart_policy.as_ref().and_then(|rp| rp.max_restarts),
+                restart_policy: p.restart_policy.as_ref().map(|rp| match rp.mode {
+                    RestartMode::Always => "always".into(),
+                    RestartMode::OnFailure => "on-failure".into(),
+                    RestartMode::Never => "never".into(),
+                }),
+                watched: if p.watch_config.is_some() {
+                    Some(true)
+                } else {
+                    None
+                },
             })
             .collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));
         infos
     }
 
-    fn find(&self, target: &str) -> Option<&ManagedProcess> {
+    pub(crate) fn find(&self, target: &str) -> Option<&ManagedProcess> {
         self.processes
             .get(target)
             .or_else(|| self.processes.values().find(|p| p.id == target))
     }
 
-    fn find_mut(&mut self, target: &str) -> Option<&mut ManagedProcess> {
+    pub(crate) fn find_mut(&mut self, target: &str) -> Option<&mut ManagedProcess> {
         if self.processes.contains_key(target) {
             self.processes.get_mut(target)
         } else {
             self.processes.values_mut().find(|p| p.id == target)
+        }
+    }
+
+    /// Classify exited processes that have a restart policy into "restartable" vs "exhausted".
+    /// Returns `(restartable, exhausted)` name vectors in a single pass.
+    pub fn classify_restart_candidates(&self) -> (Vec<String>, Vec<String>) {
+        let mut restartable = Vec::new();
+        let mut exhausted = Vec::new();
+        for p in self.processes.values() {
+            if p.child.is_some() || p.manually_stopped || p.restart_pending || p.failed {
+                continue;
+            }
+            let Some(ref policy) = p.restart_policy else {
+                continue;
+            };
+            if !policy.mode.should_restart(p.exit_code) {
+                continue;
+            }
+            if policy
+                .max_restarts
+                .is_some_and(|max| p.restart_count >= max)
+            {
+                exhausted.push(p.name.clone());
+            } else {
+                restartable.push(p.name.clone());
+            }
+        }
+        (restartable, exhausted)
+    }
+
+    /// Mark a process as failed (max restarts exhausted).
+    pub fn mark_failed(&mut self, target: &str) {
+        if let Some(p) = self.find_mut(target) {
+            p.failed = true;
+        }
+    }
+
+    /// Re-spawn a process in place, preserving supervisor metadata.
+    /// Drains capture tasks, rotates logs, re-spawns, and carries over metadata.
+    /// On spawn failure, reinserts a tombstone record with failed=true.
+    pub async fn respawn_in_place(&mut self, target: &str) -> Result<(), String> {
+        let proc = self
+            .find(target)
+            .ok_or_else(|| format!("process not found: {}", target))?;
+
+        // 1. Save metadata and spawn args
+        let command = proc.command.clone();
+        let name = proc.name.clone();
+        let cwd = proc.cwd.clone();
+        let env = proc.env.clone();
+        let port = proc.port;
+        let restart_policy = proc.restart_policy.clone();
+        let watch_config = proc.watch_config.clone();
+        let restart_count = proc.restart_count;
+        let restart_pending = proc.restart_pending;
+
+        // 2. Drop supervisor sender (signals capture task to drain)
+        if let Some(proc) = self.find_mut(target) {
+            proc.supervisor_tx = None;
+        }
+
+        // 3. Await capture task JoinHandles
+        if let Some(proc) = self.find_mut(target) {
+            let handles = std::mem::take(&mut proc.capture_handles);
+            for h in handles {
+                let _ = h.await;
+            }
+        }
+
+        // 4. Rotate log files
+        let log_dir = crate::paths::log_dir(&self.session);
+        let stdout_path = log_dir.join(format!("{}.stdout", name));
+        let stderr_path = log_dir.join(format!("{}.stderr", name));
+        log_writer::rotate_if_exists(&stdout_path).await;
+        log_writer::rotate_if_exists(&stderr_path).await;
+
+        // 5. Remove old record
+        self.processes.remove(&name);
+
+        // 6. Spawn fresh
+        let env_opt = if env.is_empty() {
+            None
+        } else {
+            Some(env.clone())
+        };
+        let resp = self
+            .spawn_process(
+                &command,
+                Some(name.clone()),
+                cwd.as_deref(),
+                env_opt.as_ref(),
+                port,
+            )
+            .await;
+
+        match resp {
+            Response::RunOk { .. } => {
+                // 7. Copy metadata to new record
+                if let Some(p) = self.find_mut(&name) {
+                    p.restart_policy = restart_policy;
+                    p.watch_config = watch_config;
+                    p.restart_count = restart_count;
+                    p.failed = false;
+                }
+                Ok(())
+            }
+            Response::Error { message, .. } => {
+                // 8. Reinsert tombstone
+                self.processes.insert(
+                    name.clone(),
+                    ManagedProcess {
+                        name: name.clone(),
+                        id: "tombstone".into(),
+                        command,
+                        cwd,
+                        env,
+                        child: None,
+                        pid: 0,
+                        started_at: Instant::now(),
+                        exit_code: None,
+                        port,
+                        restart_policy,
+                        watch_config,
+                        restart_count,
+                        manually_stopped: false,
+                        restart_pending,
+                        failed: true,
+                        supervisor_tx: None,
+                        capture_handles: Vec::new(),
+                        watch_handle: None,
+                    },
+                );
+                Err(message)
+            }
+            _ => Err("unexpected response from spawn".into()),
         }
     }
 }
@@ -457,5 +668,80 @@ mod tests {
         assert!(!is_valid_dns_label("has space"));
         assert!(!is_valid_dns_label(&"a".repeat(64))); // > 63 chars
         assert!(!is_valid_dns_label("has_underscore"));
+    }
+
+    #[tokio::test]
+    async fn test_respawn_in_place_preserves_metadata() {
+        let mut pm = ProcessManager::new("test-respawn");
+        let resp = pm
+            .spawn_process("echo hello", Some("worker".into()), None, None, None)
+            .await;
+        assert!(matches!(resp, Response::RunOk { .. }));
+
+        // Set supervisor metadata
+        if let Some(p) = pm.find_mut("worker") {
+            p.restart_policy = Some(RestartPolicy {
+                mode: RestartMode::OnFailure,
+                max_restarts: Some(5),
+                restart_delay_ms: 1000,
+            });
+            p.restart_count = 3;
+        }
+
+        // Wait for the process to exit
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        pm.refresh_exit_states();
+
+        // Respawn
+        let result = pm.respawn_in_place("worker").await;
+        assert!(result.is_ok());
+
+        // Verify metadata preserved
+        let p = pm.find("worker").unwrap();
+        assert!(p.child.is_some()); // new process running
+        assert_eq!(p.restart_count, 3);
+        assert!(p.restart_policy.is_some());
+        assert_eq!(
+            p.restart_policy.as_ref().unwrap().mode,
+            RestartMode::OnFailure
+        );
+        assert!(!p.failed);
+    }
+
+    #[tokio::test]
+    async fn test_respawn_in_place_tombstone_on_failure() {
+        let mut pm = ProcessManager::new("test-tombstone");
+        let resp = pm
+            .spawn_process("echo hello", Some("worker".into()), None, None, None)
+            .await;
+        assert!(matches!(resp, Response::RunOk { .. }));
+
+        if let Some(p) = pm.find_mut("worker") {
+            p.restart_policy = Some(RestartPolicy {
+                mode: RestartMode::Always,
+                max_restarts: Some(3),
+                restart_delay_ms: 1000,
+            });
+            p.restart_count = 2;
+            // Corrupt name to contain path traversal — triggers spawn validation error
+            p.name = "work/er".to_string();
+        }
+
+        // Re-key in the processes map under the corrupted name
+        let proc = pm.processes.remove("worker").unwrap();
+        pm.processes.insert("work/er".to_string(), proc);
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        pm.refresh_exit_states();
+
+        let result = pm.respawn_in_place("work/er").await;
+        assert!(result.is_err());
+
+        // Tombstone should exist
+        let p = pm.find("work/er").unwrap();
+        assert!(p.child.is_none());
+        assert!(p.failed);
+        assert_eq!(p.restart_count, 2); // preserved
+        assert!(p.restart_policy.is_some());
     }
 }

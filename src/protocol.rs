@@ -50,6 +50,80 @@ impl From<ErrorCode> for i32 {
     }
 }
 
+/// Restart behavior for supervised processes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RestartPolicy {
+    pub mode: RestartMode,
+    pub max_restarts: Option<u32>,
+    pub restart_delay_ms: u64,
+}
+
+/// When a process should be automatically restarted.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestartMode {
+    Always,
+    OnFailure,
+    Never,
+}
+
+impl RestartMode {
+    /// Parse a mode string (from CLI or config). Unknown values map to `Never`.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "always" => Self::Always,
+            "on-failure" => Self::OnFailure,
+            _ => Self::Never,
+        }
+    }
+
+    /// Whether this mode should trigger a restart given the exit code.
+    pub fn should_restart(self, exit_code: Option<i32>) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Always => true,
+            Self::OnFailure => exit_code != Some(0),
+        }
+    }
+}
+
+impl RestartPolicy {
+    /// Build from CLI/config string arguments.
+    pub fn from_args(mode: &str, max_restarts: Option<u32>, restart_delay: Option<u64>) -> Self {
+        Self {
+            mode: RestartMode::parse(mode),
+            max_restarts,
+            restart_delay_ms: restart_delay.unwrap_or(1000),
+        }
+    }
+}
+
+impl WatchConfig {
+    /// Build from CLI/config path and ignore lists. Returns `None` if paths is empty.
+    pub fn from_args(paths: Vec<String>, ignore: Vec<String>) -> Option<Self> {
+        if paths.is_empty() {
+            None
+        } else {
+            Some(Self {
+                paths,
+                ignore: if ignore.is_empty() {
+                    None
+                } else {
+                    Some(ignore)
+                },
+            })
+        }
+    }
+}
+
+/// File-watch configuration for auto-restart on changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatchConfig {
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub ignore: Option<Vec<String>>,
+}
+
 /// Build the canonical URL for a managed process.
 ///
 /// When `proxy_port` is `Some`, returns the subdomain-based proxy URL;
@@ -87,6 +161,10 @@ pub enum Request {
         env: Option<HashMap<String, String>>,
         #[serde(default)]
         port: Option<u16>,
+        #[serde(default)]
+        restart: Option<RestartPolicy>,
+        #[serde(default)]
+        watch: Option<WatchConfig>,
     },
     Stop {
         target: String,
@@ -196,13 +274,49 @@ pub struct ProcessInfo {
     pub port: Option<u16>,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
+    pub restart_count: Option<u32>,
+    #[serde(default)]
+    pub max_restarts: Option<u32>,
+    #[serde(default)]
+    pub restart_policy: Option<String>,
+    #[serde(default)]
+    pub watched: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProcessState {
     Running,
     Exited,
+    Failed,
+    Unknown,
+}
+
+impl std::fmt::Display for ProcessState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running => write!(f, "running"),
+            Self::Exited => write!(f, "exited"),
+            Self::Failed => write!(f, "FAILED"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ProcessState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "running" => Self::Running,
+            "exited" => Self::Exited,
+            "failed" => Self::Failed,
+            _ => Self::Unknown,
+        })
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
@@ -225,6 +339,8 @@ mod tests {
                 cwd: None,
                 env: None,
                 port: None,
+                restart: None,
+                watch: None,
             },
             Request::Stop {
                 target: "test".into(),
@@ -321,6 +437,10 @@ mod tests {
             command: "cargo run".into(),
             port: Some(8080),
             url: Some("http://127.0.0.1:8080".into()),
+            restart_count: None,
+            max_restarts: None,
+            restart_policy: None,
+            watched: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         let parsed: ProcessInfo = serde_json::from_str(&json).unwrap();
@@ -335,6 +455,8 @@ mod tests {
             cwd: None,
             env: None,
             port: None,
+            restart: None,
+            watch: None,
         };
         let json = serde_json::to_string(&run).unwrap();
         assert!(json.contains("\"type\":\"Run\""));

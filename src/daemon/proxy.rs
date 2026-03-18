@@ -1,6 +1,6 @@
 use crate::daemon::actor::{PmHandle, ProxyState};
 use crate::error::ProxyError;
-use crate::protocol::{ProcessState, Response};
+use crate::protocol::Response;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
@@ -233,10 +233,7 @@ async fn status_page(handle: &PmHandle, proxy_port: u16) -> HyperResponse<BoxBod
         } else {
             body.push_str("Routes:\n");
             for p in &processes {
-                let state_str = match p.state {
-                    ProcessState::Running => "running",
-                    ProcessState::Exited => "exited",
-                };
+                let state_str = p.state.to_string();
                 use std::fmt::Write;
                 if let Some(port) = p.port {
                     let _ = writeln!(

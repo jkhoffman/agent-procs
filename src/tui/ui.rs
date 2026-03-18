@@ -49,9 +49,26 @@ fn draw_process_list(frame: &mut Frame, app: &App, area: Rect) {
                         );
                     }
                 }
+                ProcessState::Failed => ("⟳", Style::default().fg(Color::Yellow)),
+                ProcessState::Unknown => ("?", Style::default().fg(Color::DarkGray)),
             };
 
-            let text = format!("{} {}", indicator, p.name);
+            // Build label with restart count and watch indicator
+            let mut label = p.name.clone();
+            if let Some(count) = p.restart_count
+                && count > 0
+            {
+                if let Some(max) = p.max_restarts {
+                    label = format!("{} ({}/{}↻)", label, count, max);
+                } else {
+                    label = format!("{} ({}↻)", label, count);
+                }
+            }
+            if p.watched == Some(true) {
+                label = format!("{} W", label);
+            }
+
+            let text = format!("{} {}", indicator, label);
             let style = if i == app.selected {
                 style.bg(Color::DarkGray)
             } else {
@@ -113,82 +130,27 @@ fn draw_output(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let stderr_style = Style::default().fg(Color::Yellow);
 
-    // Try windowed rendering (disk-backed). Falls back to None when filter is active.
-    if let Some(window) = app.visible_lines(&name, visible_height) {
-        let lines: Vec<Line> = if window.is_empty() && !app.buffers.contains_key(&name) {
-            vec![
-                Line::from("No output yet".to_string()).style(Style::default().fg(Color::DarkGray)),
-            ]
-        } else {
-            window
-                .iter()
-                .map(|(src, l)| {
-                    let style = if *src == LineSource::Stderr {
-                        Some(stderr_style)
-                    } else {
-                        None
-                    };
-                    ansi_line(l, style)
-                })
-                .collect()
-        };
-
-        let paragraph =
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title));
-        frame.render_widget(paragraph, area);
+    // Windowed rendering (disk-backed). Handles both filtered and unfiltered.
+    let window = app.visible_lines(&name, visible_height).unwrap_or_default();
+    let lines: Vec<Line> = if window.is_empty() && !app.buffers.contains_key(&name) {
+        vec![Line::from("No output yet".to_string()).style(Style::default().fg(Color::DarkGray))]
     } else {
-        // Filtered mode: fall back to collect-all-from-hot-buffer approach
-        let filter_pat = app.filter.as_deref();
-        let matches_filter = |line: &str| filter_pat.is_none_or(|p| line.contains(p));
+        window
+            .iter()
+            .map(|(src, l)| {
+                let style = if *src == LineSource::Stderr {
+                    Some(stderr_style)
+                } else {
+                    None
+                };
+                ansi_line(l, style)
+            })
+            .collect()
+    };
 
-        let lines: Vec<Line> = if let Some(buf) = app.buffers.get(&name) {
-            match app.stream_mode {
-                StreamMode::Stdout => buf
-                    .stdout_lines()
-                    .filter(|l| matches_filter(l))
-                    .map(|l| ansi_line(l, None))
-                    .collect(),
-                StreamMode::Stderr => buf
-                    .stderr_lines()
-                    .filter(|l| matches_filter(l))
-                    .map(|l| ansi_line(l, Some(stderr_style)))
-                    .collect(),
-                StreamMode::Both => buf
-                    .all_lines()
-                    .filter(|(_, l)| matches_filter(l))
-                    .map(|(src, l)| {
-                        let style = if src == LineSource::Stderr {
-                            Some(stderr_style)
-                        } else {
-                            None
-                        };
-                        ansi_line(l, style)
-                    })
-                    .collect(),
-            }
-        } else {
-            vec![
-                Line::from("No output yet".to_string()).style(Style::default().fg(Color::DarkGray)),
-            ]
-        };
-
-        let total_lines = lines.len();
-        let scroll_offset = if app.paused {
-            app.scroll_offsets
-                .get(name.as_str())
-                .copied()
-                .unwrap_or(0)
-                .min(total_lines.saturating_sub(visible_height))
-        } else {
-            0
-        };
-        let scroll_pos = total_lines.saturating_sub(visible_height + scroll_offset);
-
-        let paragraph = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .scroll((scroll_pos as u16, 0));
-        frame.render_widget(paragraph, area);
-    }
+    let paragraph =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title));
+    frame.render_widget(paragraph, area);
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -200,11 +162,21 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         " ↑↓ select  r restart  x stop  X stop-all  e stream  Space pause  u/d scroll  / filter  q quit  Q down ".to_string()
     };
 
-    let counts = format!(
-        " {} running, {} exited ",
-        app.running_count(),
-        app.exited_count()
-    );
+    let failed = app.failed_count();
+    let counts = if failed > 0 {
+        format!(
+            " {} running, {} failed, {} exited ",
+            app.running_count(),
+            failed,
+            app.exited_count()
+        )
+    } else {
+        format!(
+            " {} running, {} exited ",
+            app.running_count(),
+            app.exited_count()
+        )
+    };
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)

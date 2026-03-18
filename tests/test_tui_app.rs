@@ -29,6 +29,17 @@ fn test_output_buffer_stderr() {
 }
 
 #[test]
+fn test_failed_count() {
+    let mut app = App::new();
+    app.update_processes(vec![
+        make_info("a", ProcessState::Running),
+        make_info("b", ProcessState::Failed),
+        make_info("c", ProcessState::Failed),
+    ]);
+    assert_eq!(app.failed_count(), 2);
+}
+
+#[test]
 fn test_app_select_next_wraps() {
     let mut app = App::new();
     app.update_processes(vec![
@@ -96,5 +107,9 @@ fn make_info(name: &str, state: ProcessState) -> ProcessInfo {
         command: "test".into(),
         port: None,
         url: None,
+        restart_count: None,
+        max_restarts: None,
+        restart_policy: None,
+        watched: None,
     }
 }
