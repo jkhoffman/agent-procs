@@ -1,4 +1,5 @@
 use crate::protocol::{ProcessState, Request, Response};
+use std::fmt::Write;
 
 pub async fn execute(session: &str, json: bool) -> i32 {
     let req = Request::Status;
@@ -14,17 +15,26 @@ pub async fn execute(session: &str, json: bool) -> i32 {
                 }
             } else {
                 let has_urls = processes.iter().any(|p| p.url.is_some());
-                if has_urls {
-                    println!(
-                        "{:<12} {:<8} {:<10} {:<6} {:<30} UPTIME",
-                        "NAME", "PID", "STATE", "EXIT", "URL"
-                    );
-                } else {
-                    println!(
-                        "{:<12} {:<8} {:<10} {:<6} UPTIME",
-                        "NAME", "PID", "STATE", "EXIT"
-                    );
+                let has_restarts = processes
+                    .iter()
+                    .any(|p| p.restart_policy.is_some() || p.restart_count.is_some());
+                let has_watch = processes.iter().any(|p| p.watched == Some(true));
+
+                // Build header
+                let mut header =
+                    format!("{:<12} {:<8} {:<10} {:<6}", "NAME", "PID", "STATE", "EXIT");
+                if has_restarts {
+                    let _ = write!(header, " {:<10}", "RESTARTS");
                 }
+                if has_watch {
+                    let _ = write!(header, " {:<6}", "WATCH");
+                }
+                if has_urls {
+                    let _ = write!(header, " {:<30}", "URL");
+                }
+                let _ = write!(header, " UPTIME");
+                println!("{}", header);
+
                 for p in &processes {
                     let state = match p.state {
                         ProcessState::Running => "running",
@@ -34,18 +44,27 @@ pub async fn execute(session: &str, json: bool) -> i32 {
                     };
                     let exit = p.exit_code.map_or("-".into(), |c| c.to_string());
                     let uptime = p.uptime_secs.map_or("-".into(), format_uptime);
+
+                    let mut line = format!("{:<12} {:<8} {:<10} {:<6}", p.name, p.pid, state, exit);
+
+                    if has_restarts {
+                        let restarts = match (p.restart_count, p.max_restarts) {
+                            (Some(c), Some(m)) => format!("{}/{}", c, m),
+                            (Some(c), None) => c.to_string(),
+                            _ => "-".into(),
+                        };
+                        let _ = write!(line, " {:<10}", restarts);
+                    }
+                    if has_watch {
+                        let watch = if p.watched == Some(true) { "*" } else { "-" };
+                        let _ = write!(line, " {:<6}", watch);
+                    }
                     if has_urls {
                         let url = p.url.as_deref().unwrap_or("-");
-                        println!(
-                            "{:<12} {:<8} {:<10} {:<6} {:<30} {}",
-                            p.name, p.pid, state, exit, url, uptime
-                        );
-                    } else {
-                        println!(
-                            "{:<12} {:<8} {:<10} {:<6} {}",
-                            p.name, p.pid, state, exit, uptime
-                        );
+                        let _ = write!(line, " {:<30}", url);
                     }
+                    let _ = write!(line, " {}", uptime);
+                    println!("{}", line);
                 }
             }
             Some(0)
