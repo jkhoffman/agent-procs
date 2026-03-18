@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-17
+
+### Added
+
+- **Restart policies**: `--autorestart always|on-failure|never` with
+  `--max-restarts` and `--restart-delay` for automatic crash recovery.
+  Processes transition to `Failed` state when max restarts are exhausted.
+- **File watch mode**: `--watch "src/**"` auto-restarts processes when watched
+  files change. Uses OS-native file watching (FSEvents on macOS, inotify on
+  Linux) with 500ms debounce. Default ignore list covers `.git`, `node_modules`,
+  `target`, `__pycache__`.
+- **Supervisor annotations**: synthetic log lines (`[agent-procs] Restarted`,
+  `[agent-procs] Max restarts exhausted`, `[agent-procs] File changed`) written
+  to disk logs via per-process mpsc supervisor channel, visible in `logs --tail`,
+  TUI, and `--follow`.
+- **`ProcessState::Failed`** and **`ProcessState::Unknown`** variants with
+  custom `Deserialize` for forward compatibility.
+- **`respawn_in_place()`**: drains capture tasks, rotates logs, re-spawns with
+  original args, carries over supervisor metadata. Creates tombstone record on
+  spawn failure.
+- **RESTARTS and WATCH columns** in `status` output (shown conditionally).
+- **Restart count** (`2/5↻`) and **watch indicator** (`W`) in TUI process list.
+- **Failed count** in TUI status bar.
+- Config file fields: `autorestart`, `max_restarts`, `restart_delay`, `watch`,
+  `watch_ignore`.
+- CLI flags: `--autorestart`, `--max-restarts`, `--restart-delay`, `--watch`,
+  `--watch-ignore`.
+- New dependencies: `notify` 7 (file watching), `globset` 0.4 (glob matching).
+
+### Changed
+
+- `capture_output()` now accepts an mpsc supervisor channel for synthetic log
+  lines. Uses `tokio::select!` to interleave pipe reads with supervisor messages.
+- `ManagedProcess` extended with supervisor fields: `restart_policy`,
+  `watch_config`, `restart_count`, `manually_stopped`, `restart_pending`,
+  `failed`, `supervisor_tx`, `capture_handles`, `watch_handle`.
+- Actor stores a self-sender for scheduling delayed `AutoRestart` commands.
+- `stop` sets `manually_stopped` flag; `restart` clears it along with
+  `restart_count` and `failed`.
+
 ## [0.5.1] - 2026-03-17
 
 ### Fixed
