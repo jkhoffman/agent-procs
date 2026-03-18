@@ -90,6 +90,16 @@ impl OutputBuffer {
     }
 }
 
+/// Cached index of matching line numbers for filtered disk scrollback.
+pub struct FilteredIndex {
+    pub filter: String,
+    pub stream_mode: StreamMode,
+    /// Line indices (in the stream mode's address space) that match the filter.
+    pub matching_lines: Vec<usize>,
+    /// Number of disk lines scanned so far (for incremental updates).
+    pub scanned_up_to: usize,
+}
+
 /// Input mode for the TUI.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputMode {
@@ -117,6 +127,8 @@ pub struct App {
     pub visible_height: usize,
     /// Disk-backed log readers for each process.
     pub disk_readers: HashMap<String, DiskLogReader>,
+    /// Cached filtered indices for filtered disk scrollback.
+    pub filtered_indices: HashMap<String, FilteredIndex>,
 }
 
 impl Default for App {
@@ -141,6 +153,7 @@ impl App {
             filter: None,
             visible_height: 20,
             disk_readers: HashMap::new(),
+            filtered_indices: HashMap::new(),
         }
     }
 
@@ -177,6 +190,13 @@ impl App {
             StreamMode::Stderr => StreamMode::Both,
             StreamMode::Both => StreamMode::Stdout,
         };
+        // Rebuild filtered indices if filter is active (different line numbering)
+        if self.filter.is_some() {
+            let names: Vec<String> = self.disk_readers.keys().cloned().collect();
+            for name in names {
+                self.build_filtered_index(&name);
+            }
+        }
     }
 
     pub fn toggle_pause(&mut self) {
@@ -245,11 +265,14 @@ impl App {
     }
 
     /// Count visible lines for the selected process.
-    /// When a filter is active, uses only the hot buffer.
+    /// When a filter is active, uses the filtered index count.
     /// Otherwise, uses the disk-backed total (authoritative).
     fn line_count_for(&mut self, name: &str) -> usize {
         if self.filter.is_some() {
-            return self.hot_line_count(name, self.filter.as_deref());
+            return self
+                .filtered_indices
+                .get(name)
+                .map_or(0, |fi| fi.matching_lines.len());
         }
         self.total_line_count(name)
     }
@@ -296,15 +319,15 @@ impl App {
 
     /// Fetch exactly the visible window of lines for rendering.
     ///
-    /// When a filter is active, returns `None` — the caller should fall back
-    /// to the old collect-all-from-hot-buffer approach.
+    /// When a filter is active, uses the `FilteredIndex` to read matching
+    /// lines from disk. Returns `Some` in all cases.
     pub fn visible_lines(
         &mut self,
         name: &str,
         visible_height: usize,
     ) -> Option<Vec<(LineSource, String)>> {
         if self.filter.is_some() {
-            return None; // caller falls back to hot buffer with filter
+            return Some(self.filtered_visible_lines(name, visible_height));
         }
 
         let total = self.total_line_count(name);
@@ -403,6 +426,89 @@ impl App {
         }
     }
 
+    /// Render the visible window of filtered lines using the `FilteredIndex`.
+    fn filtered_visible_lines(
+        &mut self,
+        name: &str,
+        visible_height: usize,
+    ) -> Vec<(LineSource, String)> {
+        let total = self
+            .filtered_indices
+            .get(name)
+            .map_or(0, |fi| fi.matching_lines.len());
+        if total == 0 {
+            return Vec::new();
+        }
+
+        let scroll_offset = if self.paused {
+            self.scroll_offsets.get(name).copied().unwrap_or(0)
+        } else {
+            0
+        };
+
+        let window_end = total.saturating_sub(scroll_offset);
+        let window_start = window_end.saturating_sub(visible_height);
+        let count = window_end - window_start;
+        if count == 0 {
+            return Vec::new();
+        }
+
+        // Get the line numbers we need to read
+        let line_numbers: Vec<usize> = self
+            .filtered_indices
+            .get(name)
+            .map(|fi| fi.matching_lines[window_start..window_end].to_vec())
+            .unwrap_or_default();
+
+        let mode = self.stream_mode;
+
+        // Read scattered lines from disk
+        if let Some(reader) = self.disk_readers.get_mut(name) {
+            reader.read_scattered_lines(mode, &line_numbers)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Build or rebuild the filtered index for a process.
+    fn build_filtered_index(&mut self, name: &str) {
+        let Some(filter) = self.filter.clone() else {
+            return;
+        };
+        let mode = self.stream_mode;
+
+        let matching_lines = if let Some(reader) = self.disk_readers.get_mut(name) {
+            reader.scan_matching_lines(&filter, mode)
+        } else {
+            Vec::new()
+        };
+
+        let scanned_up_to = match mode {
+            StreamMode::Stdout => self
+                .disk_readers
+                .get_mut(name)
+                .map_or(0, |r| r.line_count(LineSource::Stdout)),
+            StreamMode::Stderr => self
+                .disk_readers
+                .get_mut(name)
+                .map_or(0, |r| r.line_count(LineSource::Stderr)),
+            StreamMode::Both => self
+                .disk_readers
+                .get_mut(name)
+                .map_or(0, DiskLogReader::line_count_both),
+        };
+
+        self.filtered_indices.insert(
+            name.to_string(),
+            FilteredIndex {
+                filter,
+                stream_mode: mode,
+                matching_lines,
+                scanned_up_to,
+            },
+        );
+    }
+
     pub fn start_filter(&mut self) {
         self.input_mode = InputMode::FilterInput;
         self.filter_buf = self.filter.clone().unwrap_or_default();
@@ -412,8 +518,14 @@ impl App {
         self.input_mode = InputMode::Normal;
         if self.filter_buf.is_empty() {
             self.filter = None;
+            self.filtered_indices.clear();
         } else {
             self.filter = Some(self.filter_buf.clone());
+            // Build filtered index for all processes with disk readers
+            let names: Vec<String> = self.disk_readers.keys().cloned().collect();
+            for name in names {
+                self.build_filtered_index(&name);
+            }
         }
     }
 
@@ -425,6 +537,7 @@ impl App {
     pub fn clear_filter(&mut self) {
         self.filter = None;
         self.filter_buf.clear();
+        self.filtered_indices.clear();
     }
 
     pub fn push_output(&mut self, process: &str, stream: Stream, line: &str) {
@@ -719,13 +832,14 @@ mod tests {
     }
 
     #[test]
-    fn test_visible_lines_returns_none_when_filtered() {
+    fn test_visible_lines_with_filter_uses_filtered_index() {
         let mut app = App::new();
         app.push_output("web", Stream::Stdout, "hello");
         app.filter = Some("hello".into());
 
-        // Should return None so caller falls back to hot buffer filtering
-        assert!(app.visible_lines("web", 10).is_none());
+        // Without a disk reader, returns empty (no filtered index built)
+        let lines = app.visible_lines("web", 10).unwrap();
+        assert!(lines.is_empty());
     }
 
     #[test]
