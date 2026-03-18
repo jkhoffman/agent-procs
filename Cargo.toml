@@ -64,3 +64,11 @@ single_match_else = "allow"
 manual_let_else = "allow"
 items_after_statements = "allow"
 cast_possible_wrap = "allow"
+
+[package.metadata.release]
+tag-prefix = "v"
+tag-name = "v{{version}}"
+pre-release-commit-message = "chore: release {{version}}"
+tag-message = "v{{version}}"
+pre-release-hook = ["git-cliff", "--tag", "v{{version}}", "--output", "CHANGELOG.md"]
+publish = false
