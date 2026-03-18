@@ -417,6 +417,9 @@ impl ProcessManagerActor {
             return;
         }
 
+        // Capture exit code before respawn (respawn_in_place removes the old record)
+        let prev_exit_code = self.pm.find(name).and_then(|p| p.exit_code);
+
         // Increment count
         if let Some(p) = self.pm.find_mut(name) {
             p.restart_count += 1;
@@ -429,7 +432,7 @@ impl ProcessManagerActor {
                 if let Some(p) = self.pm.find(name) {
                     let count = p.restart_count;
                     let max = p.restart_policy.as_ref().and_then(|rp| rp.max_restarts);
-                    let exit = p.exit_code.map_or("signal".into(), |c: i32| c.to_string());
+                    let exit = prev_exit_code.map_or("signal".into(), |c: i32| c.to_string());
                     let msg = match max {
                         Some(m) => {
                             format!(
@@ -445,6 +448,9 @@ impl ProcessManagerActor {
                         let _ = tx.send(msg).await;
                     }
                 }
+                // Recreate file watcher for the new process (old one was
+                // dropped when respawn_in_place removed the process record)
+                self.setup_watcher(name);
             }
             Err(err) => {
                 // Broadcast failure (live only)

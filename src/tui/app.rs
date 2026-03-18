@@ -96,7 +96,9 @@ pub struct FilteredIndex {
     pub stream_mode: StreamMode,
     /// Line indices (in the stream mode's address space) that match the filter.
     pub matching_lines: Vec<usize>,
-    /// Number of disk lines scanned so far (for incremental updates).
+    /// Number of disk lines scanned so far.
+    /// TODO: use this for incremental updates in `push_output()` so new lines
+    /// matching the filter appear without re-entering the filter.
     pub scanned_up_to: usize,
 }
 
