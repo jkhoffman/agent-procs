@@ -744,4 +744,166 @@ mod tests {
         assert_eq!(p.restart_count, 2); // preserved
         assert!(p.restart_policy.is_some());
     }
+
+    /// Helper: build an exited `ManagedProcess` with sensible defaults.
+    fn make_exited_process(name: &str, exit_code: Option<i32>) -> ManagedProcess {
+        ManagedProcess {
+            name: name.to_string(),
+            id: format!("id-{}", name),
+            command: "true".to_string(),
+            cwd: None,
+            env: HashMap::new(),
+            child: None,
+            pid: 0,
+            started_at: Instant::now(),
+            exit_code,
+            port: None,
+            restart_policy: None,
+            watch_config: None,
+            restart_count: 0,
+            manually_stopped: false,
+            restart_pending: false,
+            failed: false,
+            supervisor_tx: None,
+            capture_handles: Vec::new(),
+            watch_handle: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_classify_skips_running_process() {
+        let mut pm = ProcessManager::new("test-classify-running");
+        let mut proc = make_exited_process("runner", Some(1));
+        proc.restart_policy = Some(RestartPolicy {
+            mode: RestartMode::Always,
+            max_restarts: None,
+            restart_delay_ms: 0,
+        });
+        // Simulate a running process by spawning a real tokio child
+        let child = Command::new("sleep")
+            .arg("60")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap_or(0) as i32;
+        proc.child = Some(child);
+        pm.processes.insert("runner".into(), proc);
+
+        let (restartable, exhausted) = pm.classify_restart_candidates();
+        assert!(restartable.is_empty());
+        assert!(exhausted.is_empty());
+
+        // Clean up the child process
+        if pid > 0 {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
+        if let Some(p) = pm.processes.get_mut("runner")
+            && let Some(ref mut c) = p.child
+        {
+            let _ = c.wait().await;
+        }
+    }
+
+    #[test]
+    fn test_classify_skips_manually_stopped() {
+        let mut pm = ProcessManager::new("test-classify-stopped");
+        let mut proc = make_exited_process("stopped", Some(1));
+        proc.restart_policy = Some(RestartPolicy {
+            mode: RestartMode::Always,
+            max_restarts: None,
+            restart_delay_ms: 0,
+        });
+        proc.manually_stopped = true;
+        pm.processes.insert("stopped".into(), proc);
+
+        let (restartable, exhausted) = pm.classify_restart_candidates();
+        assert!(restartable.is_empty());
+        assert!(exhausted.is_empty());
+    }
+
+    #[test]
+    fn test_classify_skips_clean_exit_on_failure_mode() {
+        let mut pm = ProcessManager::new("test-classify-clean");
+        let mut proc = make_exited_process("clean", Some(0));
+        proc.restart_policy = Some(RestartPolicy {
+            mode: RestartMode::OnFailure,
+            max_restarts: None,
+            restart_delay_ms: 0,
+        });
+        pm.processes.insert("clean".into(), proc);
+
+        let (restartable, exhausted) = pm.classify_restart_candidates();
+        assert!(restartable.is_empty());
+        assert!(exhausted.is_empty());
+    }
+
+    #[test]
+    fn test_classify_skips_restart_pending() {
+        let mut pm = ProcessManager::new("test-classify-pending");
+        let mut proc = make_exited_process("pending", Some(1));
+        proc.restart_policy = Some(RestartPolicy {
+            mode: RestartMode::Always,
+            max_restarts: None,
+            restart_delay_ms: 0,
+        });
+        proc.restart_pending = true;
+        pm.processes.insert("pending".into(), proc);
+
+        let (restartable, exhausted) = pm.classify_restart_candidates();
+        assert!(restartable.is_empty());
+        assert!(exhausted.is_empty());
+    }
+
+    #[test]
+    fn test_classify_restartable_on_failure() {
+        let mut pm = ProcessManager::new("test-classify-on-failure");
+        let mut proc = make_exited_process("crasher", Some(1));
+        proc.restart_policy = Some(RestartPolicy {
+            mode: RestartMode::OnFailure,
+            max_restarts: None,
+            restart_delay_ms: 0,
+        });
+        pm.processes.insert("crasher".into(), proc);
+
+        let (restartable, exhausted) = pm.classify_restart_candidates();
+        assert_eq!(restartable, vec!["crasher"]);
+        assert!(exhausted.is_empty());
+    }
+
+    #[test]
+    fn test_classify_exhausted() {
+        let mut pm = ProcessManager::new("test-classify-exhausted");
+        let mut proc = make_exited_process("tired", Some(1));
+        proc.restart_policy = Some(RestartPolicy {
+            mode: RestartMode::Always,
+            max_restarts: Some(3),
+            restart_delay_ms: 0,
+        });
+        proc.restart_count = 3;
+        pm.processes.insert("tired".into(), proc);
+
+        let (restartable, exhausted) = pm.classify_restart_candidates();
+        assert!(restartable.is_empty());
+        assert_eq!(exhausted, vec!["tired"]);
+    }
+
+    #[test]
+    fn test_classify_always_mode_clean_exit() {
+        let mut pm = ProcessManager::new("test-classify-always-clean");
+        let mut proc = make_exited_process("always-on", Some(0));
+        proc.restart_policy = Some(RestartPolicy {
+            mode: RestartMode::Always,
+            max_restarts: None,
+            restart_delay_ms: 0,
+        });
+        pm.processes.insert("always-on".into(), proc);
+
+        let (restartable, exhausted) = pm.classify_restart_candidates();
+        assert_eq!(restartable, vec!["always-on"]);
+        assert!(exhausted.is_empty());
+    }
 }
