@@ -175,6 +175,11 @@ impl ProcessManager {
         let seq_counter = Arc::new(AtomicU64::new(0));
 
         // Spawn output capture tasks via log_writer
+        // Supervisor channel: stdout gets the real sender, stderr gets a dummy
+        let (sup_tx, sup_rx_stdout) = tokio::sync::mpsc::channel::<String>(16);
+        let (stderr_sup_sender, sup_rx_stderr) = tokio::sync::mpsc::channel::<String>(16);
+        drop(stderr_sup_sender);
+
         if let Some(stdout) = child.stdout.take() {
             let tx = self.output_tx.clone();
             let pname = name.clone();
@@ -190,6 +195,7 @@ impl ProcessManager {
                     DEFAULT_MAX_LOG_BYTES,
                     log_writer::DEFAULT_MAX_ROTATED_FILES,
                     seq,
+                    sup_rx_stdout,
                 )
                 .await;
             });
@@ -209,10 +215,14 @@ impl ProcessManager {
                     DEFAULT_MAX_LOG_BYTES,
                     log_writer::DEFAULT_MAX_ROTATED_FILES,
                     seq,
+                    sup_rx_stderr,
                 )
                 .await;
             });
         }
+
+        // Drop supervisor sender for now — Task 5 will store it in ManagedProcess
+        drop(sup_tx);
 
         self.processes.insert(
             name.clone(),
