@@ -1,6 +1,6 @@
 use crate::daemon::log_writer::OutputLine;
 use crate::daemon::process_manager::ProcessManager;
-use crate::protocol::{self, ErrorCode, Response};
+use crate::protocol::{self, ErrorCode, Response, Stream as ProtoStream};
 use std::collections::HashMap;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::time::{self, Duration, MissedTickBehavior};
@@ -22,6 +22,8 @@ enum PmCommand {
         cwd: Option<String>,
         env: Option<HashMap<String, String>>,
         port: Option<u16>,
+        restart: Option<crate::protocol::RestartPolicy>,
+        watch: Option<crate::protocol::WatchConfig>,
         reply: oneshot::Sender<Response>,
     },
     Stop {
@@ -61,6 +63,10 @@ enum PmCommand {
     Subscribe {
         reply: oneshot::Sender<broadcast::Receiver<OutputLine>>,
     },
+    /// Internal: delayed auto-restart for a crashed process.
+    AutoRestart {
+        name: String,
+    },
 }
 
 fn actor_error(msg: &str) -> Response {
@@ -85,6 +91,21 @@ impl PmHandle {
         env: Option<HashMap<String, String>>,
         port: Option<u16>,
     ) -> Response {
+        self.spawn_process_supervised(command, name, cwd, env, port, None, None)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn spawn_process_supervised(
+        &self,
+        command: String,
+        name: Option<String>,
+        cwd: Option<String>,
+        env: Option<HashMap<String, String>>,
+        port: Option<u16>,
+        restart: Option<crate::protocol::RestartPolicy>,
+        watch: Option<crate::protocol::WatchConfig>,
+    ) -> Response {
         let (reply, rx) = oneshot::channel();
         let _ = self
             .tx
@@ -94,6 +115,8 @@ impl PmHandle {
                 cwd,
                 env,
                 port,
+                restart,
+                watch,
                 reply,
             })
             .await;
@@ -193,6 +216,8 @@ impl PmHandle {
 pub struct ProcessManagerActor {
     pm: ProcessManager,
     rx: mpsc::Receiver<PmCommand>,
+    /// Clone of the sender for scheduling internal commands (e.g. delayed restart).
+    self_tx: mpsc::Sender<PmCommand>,
     proxy_state_tx: watch::Sender<ProxyState>,
     proxy_port: Option<u16>,
 }
@@ -208,10 +233,11 @@ impl ProcessManagerActor {
         };
         let (proxy_state_tx, proxy_state_rx) = watch::channel(initial_state);
 
-        let handle = PmHandle { tx };
+        let handle = PmHandle { tx: tx.clone() };
         let actor = Self {
             pm,
             rx,
+            self_tx: tx,
             proxy_state_tx,
             proxy_port: None,
         };
@@ -234,7 +260,48 @@ impl ProcessManagerActor {
                     if self.pm.refresh_exit_states() {
                         self.publish_proxy_state();
                     }
+                    // Check for processes needing restart
+                    self.schedule_restarts();
                 }
+            }
+        }
+    }
+
+    /// Check for exited processes eligible for auto-restart, schedule delayed restarts.
+    /// Also detects processes that have exhausted their `max_restarts` and marks them failed.
+    fn schedule_restarts(&mut self) {
+        // First, mark processes that have exhausted their restarts as failed
+        let exhausted: Vec<String> = self.pm.exhausted_restart_processes().into_iter().collect();
+        for name in &exhausted {
+            if let Some(p) = self.pm.find(name)
+                && let Some(ref policy) = p.restart_policy
+                && let Some(max) = policy.max_restarts
+                && let Some(ref tx) = p.supervisor_tx
+            {
+                let msg = format!("[agent-procs] Max restarts ({}) exhausted", max);
+                let _ = tx.try_send(msg);
+            }
+            self.pm.mark_failed(name);
+        }
+        if !exhausted.is_empty() {
+            self.publish_proxy_state();
+        }
+
+        // Then schedule restarts for eligible processes
+        let restartable = self.pm.collect_restartable_processes();
+        for name in restartable {
+            if let Some(p) = self.pm.find_mut(&name) {
+                p.restart_pending = true;
+                let delay_ms = p
+                    .restart_policy
+                    .as_ref()
+                    .map_or(1000, |rp| rp.restart_delay_ms);
+                let tx = self.self_tx.clone();
+                let name_clone = name.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    let _ = tx.send(PmCommand::AutoRestart { name: name_clone }).await;
+                });
             }
         }
     }
@@ -247,12 +314,21 @@ impl ProcessManagerActor {
                 cwd,
                 env,
                 port,
+                restart,
+                watch,
                 reply,
             } => {
                 let mut resp = self
                     .pm
                     .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port)
                     .await;
+                // Attach restart/watch config if spawn succeeded
+                if let Response::RunOk { ref name, .. } = resp
+                    && let Some(p) = self.pm.find_mut(name)
+                {
+                    p.restart_policy = restart;
+                    p.watch_config = watch;
+                }
                 if let Response::RunOk {
                     ref name,
                     ref mut url,
@@ -309,7 +385,70 @@ impl ProcessManagerActor {
             PmCommand::Subscribe { reply } => {
                 let _ = reply.send(self.pm.output_tx.subscribe());
             }
+            PmCommand::AutoRestart { name } => {
+                self.handle_auto_restart(&name).await;
+            }
         }
+    }
+
+    async fn handle_auto_restart(&mut self, name: &str) {
+        // Re-check guards
+        let should_restart = self
+            .pm
+            .find(name)
+            .is_some_and(|p| p.child.is_none() && !p.manually_stopped && p.restart_pending);
+        if !should_restart {
+            if let Some(p) = self.pm.find_mut(name) {
+                p.restart_pending = false;
+            }
+            return;
+        }
+
+        // Increment count
+        if let Some(p) = self.pm.find_mut(name) {
+            p.restart_count += 1;
+        }
+
+        // Respawn
+        match self.pm.respawn_in_place(name).await {
+            Ok(()) => {
+                // Send success annotation to new capture task
+                if let Some(p) = self.pm.find(name) {
+                    let count = p.restart_count;
+                    let max = p.restart_policy.as_ref().and_then(|rp| rp.max_restarts);
+                    let exit = p.exit_code.map_or("signal".into(), |c: i32| c.to_string());
+                    let msg = match max {
+                        Some(m) => {
+                            format!(
+                                "[agent-procs] Restarted (exit {}, attempt {}/{})",
+                                exit, count, m
+                            )
+                        }
+                        None => {
+                            format!("[agent-procs] Restarted (exit {}, attempt {})", exit, count)
+                        }
+                    };
+                    if let Some(tx) = &p.supervisor_tx {
+                        let _ = tx.send(msg).await;
+                    }
+                }
+            }
+            Err(err) => {
+                // Broadcast failure (live only)
+                let msg = format!("[agent-procs] Restart failed: {}", err);
+                let _ = self.pm.output_tx.send(OutputLine {
+                    process: name.to_string(),
+                    stream: ProtoStream::Stdout,
+                    line: msg,
+                });
+            }
+        }
+
+        // Clear pending
+        if let Some(p) = self.pm.find_mut(name) {
+            p.restart_pending = false;
+        }
+        self.publish_proxy_state();
     }
 
     /// Build a status response with proxy URL rewriting applied.

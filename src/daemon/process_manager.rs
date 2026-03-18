@@ -489,6 +489,74 @@ impl ProcessManager {
         }
     }
 
+    /// Returns names of processes eligible for auto-restart.
+    /// A process is eligible if: exited, not manually stopped, not `restart_pending`,
+    /// has a restart policy, and the policy/exit code combination allows restart.
+    pub fn collect_restartable_processes(&self) -> Vec<String> {
+        self.processes
+            .values()
+            .filter(|p| {
+                p.child.is_none()
+                    && !p.manually_stopped
+                    && !p.restart_pending
+                    && !p.failed
+                    && p.restart_policy.is_some()
+            })
+            .filter(|p| {
+                let policy = p.restart_policy.as_ref().unwrap();
+                match policy.mode {
+                    RestartMode::Never => false,
+                    RestartMode::Always => true,
+                    RestartMode::OnFailure => p.exit_code != Some(0),
+                }
+            })
+            .filter(|p| {
+                let policy = p.restart_policy.as_ref().unwrap();
+                policy.max_restarts.is_none_or(|max| p.restart_count < max)
+            })
+            .map(|p| p.name.clone())
+            .collect()
+    }
+
+    /// Returns names of processes that have exhausted their max restarts.
+    /// These are exited, not manually stopped, not failed yet, have a restart policy
+    /// with `max_restarts`, and `restart_count` >= `max_restarts`.
+    pub fn exhausted_restart_processes(&self) -> Vec<String> {
+        self.processes
+            .values()
+            .filter(|p| {
+                p.child.is_none()
+                    && !p.manually_stopped
+                    && !p.restart_pending
+                    && !p.failed
+                    && p.restart_policy.is_some()
+            })
+            .filter(|p| {
+                let policy = p.restart_policy.as_ref().unwrap();
+                // Must have a restart mode that would restart
+                match policy.mode {
+                    RestartMode::Never => false,
+                    RestartMode::Always => true,
+                    RestartMode::OnFailure => p.exit_code != Some(0),
+                }
+            })
+            .filter(|p| {
+                let policy = p.restart_policy.as_ref().unwrap();
+                policy
+                    .max_restarts
+                    .is_some_and(|max| p.restart_count >= max)
+            })
+            .map(|p| p.name.clone())
+            .collect()
+    }
+
+    /// Mark a process as failed (max restarts exhausted).
+    pub fn mark_failed(&mut self, target: &str) {
+        if let Some(p) = self.find_mut(target) {
+            p.failed = true;
+        }
+    }
+
     /// Re-spawn a process in place, preserving supervisor metadata.
     /// Drains capture tasks, rotates logs, re-spawns, and carries over metadata.
     /// On spawn failure, reinserts a tombstone record with failed=true.

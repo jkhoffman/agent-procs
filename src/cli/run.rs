@@ -1,15 +1,47 @@
-use crate::protocol::{Request, Response};
+use crate::protocol::{Request, Response, RestartMode, RestartPolicy, WatchConfig};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute(
     session: &str,
     command: &str,
     name: Option<String>,
     port: Option<u16>,
     proxy: bool,
+    autorestart: Option<String>,
+    max_restarts: Option<u32>,
+    restart_delay: Option<u64>,
+    watch: Vec<String>,
+    watch_ignore: Vec<String>,
 ) -> i32 {
     if proxy && let Some(code) = crate::cli::enable_proxy(session, None).await {
         return code;
     }
+
+    let restart = autorestart.map(|mode_str| {
+        let mode = match mode_str.as_str() {
+            "always" => RestartMode::Always,
+            "on-failure" => RestartMode::OnFailure,
+            _ => RestartMode::Never,
+        };
+        RestartPolicy {
+            mode,
+            max_restarts,
+            restart_delay_ms: restart_delay.unwrap_or(1000),
+        }
+    });
+
+    let watch_config = if watch.is_empty() {
+        None
+    } else {
+        Some(WatchConfig {
+            paths: watch,
+            ignore: if watch_ignore.is_empty() {
+                None
+            } else {
+                Some(watch_ignore)
+            },
+        })
+    };
 
     let req = Request::Run {
         command: command.into(),
@@ -17,8 +49,8 @@ pub async fn execute(
         cwd: None,
         env: None,
         port,
-        restart: None,
-        watch: None,
+        restart,
+        watch: watch_config,
     };
     crate::cli::request_and_handle(session, &req, true, |resp| match resp {
         Response::RunOk {

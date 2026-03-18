@@ -235,9 +235,13 @@ async fn handle_request(
             cwd,
             env,
             port,
-            restart: _,
-            watch: _,
-        } => handle.spawn_process(command, name, cwd, env, port).await,
+            restart,
+            watch,
+        } => {
+            handle
+                .spawn_process_supervised(command, name, cwd, env, port, restart, watch)
+                .await
+        }
         Request::Stop { target } => handle.stop_process(&target).await,
         Request::StopAll => handle.stop_all().await,
         Request::Restart { target } => handle.restart_process(&target).await,
