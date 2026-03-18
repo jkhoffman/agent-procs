@@ -17,6 +17,8 @@ pub async fn execute(
         cwd: None,
         env: None,
         port,
+        restart: None,
+        watch: None,
     };
     crate::cli::request_and_handle(session, &req, true, |resp| match resp {
         Response::RunOk {

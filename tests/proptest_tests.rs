@@ -44,6 +44,8 @@ fn arb_request() -> impl Strategy<Value = Request> {
                 cwd,
                 env,
                 port,
+                restart: None,
+                watch: None,
             }),
         any::<String>().prop_map(|target| Request::Stop { target }),
         Just(Request::StopAll),

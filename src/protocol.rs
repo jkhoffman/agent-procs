@@ -50,6 +50,31 @@ impl From<ErrorCode> for i32 {
     }
 }
 
+/// Restart behavior for supervised processes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RestartPolicy {
+    pub mode: RestartMode,
+    pub max_restarts: Option<u32>,
+    pub restart_delay_ms: u64,
+}
+
+/// When a process should be automatically restarted.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestartMode {
+    Always,
+    OnFailure,
+    Never,
+}
+
+/// File-watch configuration for auto-restart on changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatchConfig {
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub ignore: Option<Vec<String>>,
+}
+
 /// Build the canonical URL for a managed process.
 ///
 /// When `proxy_port` is `Some`, returns the subdomain-based proxy URL;
@@ -87,6 +112,10 @@ pub enum Request {
         env: Option<HashMap<String, String>>,
         #[serde(default)]
         port: Option<u16>,
+        #[serde(default)]
+        restart: Option<RestartPolicy>,
+        #[serde(default)]
+        watch: Option<WatchConfig>,
     },
     Stop {
         target: String,
@@ -225,6 +254,8 @@ mod tests {
                 cwd: None,
                 env: None,
                 port: None,
+                restart: None,
+                watch: None,
             },
             Request::Stop {
                 target: "test".into(),
@@ -335,6 +366,8 @@ mod tests {
             cwd: None,
             env: None,
             port: None,
+            restart: None,
+            watch: None,
         };
         let json = serde_json::to_string(&run).unwrap();
         assert!(json.contains("\"type\":\"Run\""));

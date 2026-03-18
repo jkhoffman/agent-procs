@@ -76,6 +76,8 @@ pub async fn execute(
                     cwd: resolved_cwd,
                     env,
                     port: def.port,
+                    restart: None,
+                    watch: None,
                 };
                 let name = (*name).clone();
                 async move {

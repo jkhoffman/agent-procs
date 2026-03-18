@@ -77,6 +77,8 @@ fn bench_protocol_serde(c: &mut Criterion) {
             cwd: Some("/app".into()),
             env: Some(HashMap::from([("PORT".into(), "3000".into())])),
             port: Some(3000),
+            restart: None,
+            watch: None,
         },
         Request::Logs {
             target: Some("api".into()),
