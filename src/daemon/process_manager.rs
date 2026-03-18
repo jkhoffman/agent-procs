@@ -2,7 +2,8 @@ use crate::daemon::log_writer::{self, OutputLine};
 use crate::daemon::port_allocator::PortAllocator;
 use crate::paths;
 use crate::protocol::{
-    ErrorCode, ProcessInfo, ProcessState, Response, Stream as ProtoStream, process_url,
+    ErrorCode, ProcessInfo, ProcessState, Response, RestartMode, RestartPolicy,
+    Stream as ProtoStream, WatchConfig, process_url,
 };
 use crate::session::IdCounter;
 use std::collections::HashMap;
@@ -40,6 +41,15 @@ pub struct ManagedProcess {
     pub started_at: Instant,
     pub exit_code: Option<i32>,
     pub port: Option<u16>,
+    // Supervisor fields
+    pub restart_policy: Option<RestartPolicy>,
+    pub watch_config: Option<WatchConfig>,
+    pub restart_count: u32,
+    pub manually_stopped: bool,
+    pub restart_pending: bool,
+    pub failed: bool,
+    pub supervisor_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    pub capture_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
 pub struct ProcessManager {
@@ -180,12 +190,14 @@ impl ProcessManager {
         let (stderr_sup_sender, sup_rx_stderr) = tokio::sync::mpsc::channel::<String>(16);
         drop(stderr_sup_sender);
 
+        let mut capture_handles = Vec::new();
+
         if let Some(stdout) = child.stdout.take() {
             let tx = self.output_tx.clone();
             let pname = name.clone();
             let path = log_dir.join(format!("{}.stdout", name));
             let seq = Arc::clone(&seq_counter);
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 log_writer::capture_output(
                     stdout,
                     &path,
@@ -199,13 +211,14 @@ impl ProcessManager {
                 )
                 .await;
             });
+            capture_handles.push(handle);
         }
         if let Some(stderr) = child.stderr.take() {
             let tx = self.output_tx.clone();
             let pname = name.clone();
             let path = log_dir.join(format!("{}.stderr", name));
             let seq = Arc::clone(&seq_counter);
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 log_writer::capture_output(
                     stderr,
                     &path,
@@ -219,10 +232,8 @@ impl ProcessManager {
                 )
                 .await;
             });
+            capture_handles.push(handle);
         }
-
-        // Drop supervisor sender for now — Task 5 will store it in ManagedProcess
-        drop(sup_tx);
 
         self.processes.insert(
             name.clone(),
@@ -237,6 +248,14 @@ impl ProcessManager {
                 started_at: Instant::now(),
                 exit_code: None,
                 port: resolved_port,
+                restart_policy: None,
+                watch_config: None,
+                restart_count: 0,
+                manually_stopped: false,
+                restart_pending: false,
+                failed: false,
+                supervisor_tx: Some(sup_tx),
+                capture_handles,
             },
         );
 
@@ -260,6 +279,8 @@ impl ProcessManager {
                 };
             }
         };
+
+        proc.manually_stopped = true;
 
         if let Some(ref child) = proc.child {
             let raw_pid = child.id().unwrap_or(0) as i32;
@@ -324,6 +345,13 @@ impl ProcessManager {
                 };
             }
         };
+        // Clear supervisor flags — restart is intentional
+        if let Some(p) = self.find_mut(target) {
+            p.manually_stopped = false;
+            p.restart_count = 0;
+            p.failed = false;
+            p.restart_pending = false;
+        }
         let _ = self.stop_process(target).await;
         self.processes.remove(&name);
         let env = if env.is_empty() { None } else { Some(env) };
@@ -411,6 +439,8 @@ impl ProcessManager {
                 pid: p.pid,
                 state: if p.child.is_some() {
                     ProcessState::Running
+                } else if p.failed {
+                    ProcessState::Failed
                 } else {
                     ProcessState::Exited
                 },
@@ -423,10 +453,22 @@ impl ProcessManager {
                 command: p.command.clone(),
                 port: p.port,
                 url: p.port.map(|port| process_url(&p.name, port, None)),
-                restart_count: None,
-                max_restarts: None,
-                restart_policy: None,
-                watched: None,
+                restart_count: if p.restart_count > 0 {
+                    Some(p.restart_count)
+                } else {
+                    None
+                },
+                max_restarts: p.restart_policy.as_ref().and_then(|rp| rp.max_restarts),
+                restart_policy: p.restart_policy.as_ref().map(|rp| match rp.mode {
+                    RestartMode::Always => "always".into(),
+                    RestartMode::OnFailure => "on-failure".into(),
+                    RestartMode::Never => "never".into(),
+                }),
+                watched: if p.watch_config.is_some() {
+                    Some(true)
+                } else {
+                    None
+                },
             })
             .collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));
