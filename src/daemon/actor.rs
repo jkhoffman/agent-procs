@@ -324,7 +324,7 @@ impl ProcessManagerActor {
             } => {
                 let mut resp = self
                     .pm
-                    .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port)
+                    .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port, None)
                     .await;
                 // Attach restart/watch config if spawn succeeded
                 let has_watch = watch.is_some();

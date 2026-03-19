@@ -109,30 +109,16 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
     max_rotated_files: u32,
     seq: Arc<AtomicU64>,
     mut sup_rx: tokio::sync::mpsc::Receiver<String>,
+    file: tokio::fs::File,
+    idx_writer: IndexWriter,
+    initial_bytes_written: u64,
 ) {
     let mut lines = BufReader::new(reader).lines();
-    let file = match tokio::fs::File::create(log_path).await {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::warn!(path = %log_path.display(), process = %process_name, error = %e, "cannot create log file");
-            return;
-        }
-    };
-
-    let idx_path = idx_path_for(log_path);
-    let seq_base = seq.load(Ordering::Relaxed);
-    let idx_writer = match IndexWriter::create(&idx_path, seq_base) {
-        Ok(w) => w,
-        Err(e) => {
-            tracing::warn!(path = %idx_path.display(), error = %e, "cannot create index file");
-            return;
-        }
-    };
 
     let mut state = LogWriteState {
         file: Some(file),
         idx_writer,
-        bytes_written: 0,
+        bytes_written: initial_bytes_written,
         lines_since_idx_flush: 0,
         log_path,
         process_name,
@@ -222,12 +208,21 @@ mod tests {
         rx
     }
 
+    /// Create pre-opened log file and index writer for tests.
+    async fn create_test_log(log_path: &Path) -> (tokio::fs::File, IndexWriter, u64) {
+        let file = tokio::fs::File::create(log_path).await.unwrap();
+        let idx_path = idx_path_for(log_path);
+        let idx_writer = IndexWriter::create(&idx_path, 0).unwrap();
+        (file, idx_writer, 0)
+    }
+
     #[tokio::test]
     async fn test_capture_output_creates_index() {
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("test.stdout");
         let (tx, _rx) = broadcast::channel(16);
         let seq = Arc::new(AtomicU64::new(0));
+        let (file, idx_writer, initial_bytes) = create_test_log(&log_path).await;
 
         // Feed 5 lines through capture_output
         let input = b"line 0\nline 1\nline 2\nline 3\nline 4\n";
@@ -242,6 +237,9 @@ mod tests {
             5,
             seq.clone(),
             dummy_sup_rx(),
+            file,
+            idx_writer,
+            initial_bytes,
         )
         .await;
 
@@ -278,6 +276,7 @@ mod tests {
 
         // Run stdout capture
         let stdout_input = b"out1\nout2\n";
+        let (file, idx_writer, initial_bytes) = create_test_log(&stdout_path).await;
         capture_output(
             &stdout_input[..],
             &stdout_path,
@@ -288,6 +287,9 @@ mod tests {
             5,
             seq.clone(),
             dummy_sup_rx(),
+            file,
+            idx_writer,
+            initial_bytes,
         )
         .await;
 
@@ -296,6 +298,9 @@ mod tests {
 
         // Run stderr capture (continues from seq=2)
         let stderr_input = b"err1\nerr2\n";
+        let stderr_file = tokio::fs::File::create(&stderr_path).await.unwrap();
+        let stderr_idx_path = idx_path_for(&stderr_path);
+        let stderr_idx = IndexWriter::create(&stderr_idx_path, 2).unwrap();
         capture_output(
             &stderr_input[..],
             &stderr_path,
@@ -306,6 +311,9 @@ mod tests {
             5,
             seq.clone(),
             dummy_sup_rx(),
+            stderr_file,
+            stderr_idx,
+            0,
         )
         .await;
 
@@ -325,6 +333,7 @@ mod tests {
         let log_path = dir.path().join("test.stdout");
         let (tx, _rx) = broadcast::channel(64);
         let seq = Arc::new(AtomicU64::new(0));
+        let (file, idx_writer, initial_bytes) = create_test_log(&log_path).await;
 
         // max_bytes=50 will trigger rotation after a few lines
         // "line NN\n" = 8 bytes, so ~6 lines per file
@@ -344,6 +353,9 @@ mod tests {
             3,
             seq,
             dummy_sup_rx(),
+            file,
+            idx_writer,
+            initial_bytes,
         )
         .await;
 
@@ -371,6 +383,7 @@ mod tests {
         let (tx, _rx) = broadcast::channel(16);
         let seq = Arc::new(AtomicU64::new(0));
         let (sup_tx, sup_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let (file, idx_writer, initial_bytes) = create_test_log(&log_path).await;
 
         // Use a duplex to control timing: pipe data is consumed first,
         // then supervisor line is drained after pipe EOF.
@@ -399,6 +412,9 @@ mod tests {
             5,
             seq.clone(),
             sup_rx,
+            file,
+            idx_writer,
+            initial_bytes,
         )
         .await;
 
