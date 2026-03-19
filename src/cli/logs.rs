@@ -3,7 +3,7 @@ use crate::protocol::{Request, Response};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 pub async fn execute(
     session: &str,
     target: Option<&str>,
@@ -13,7 +13,38 @@ pub async fn execute(
     all: bool,
     timeout: Option<u64>,
     lines: Option<usize>,
+    grep: Option<String>,
+    regex: bool,
+    since: Option<String>,
+    context: Option<u32>,
+    json: bool,
 ) -> i32 {
+    // Parse-time validation
+    if context.is_some() && grep.is_none() {
+        eprintln!("error: --context requires --grep");
+        return 1;
+    }
+    if regex && grep.is_none() {
+        eprintln!("error: --regex requires --grep");
+        return 1;
+    }
+
+    if follow {
+        if since.is_some() {
+            eprintln!("warning: --since is ignored in follow mode");
+        }
+        if context.is_some() {
+            eprintln!("warning: --context is ignored in follow mode");
+        }
+    }
+
+    // Suppress unused variable warnings until Tasks 8-9 wire these up
+    let _ = grep;
+    let _ = regex;
+    let _ = since;
+    let _ = context;
+    let _ = json;
+
     if follow {
         return execute_follow(session, target, tail, stderr, all, timeout, lines).await;
     }

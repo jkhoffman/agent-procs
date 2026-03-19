@@ -146,6 +146,21 @@ enum Commands {
         /// Max lines to stream (for --follow)
         #[arg(long)]
         lines: Option<usize>,
+        /// Filter lines matching pattern (substring by default)
+        #[arg(long)]
+        grep: Option<String>,
+        /// Treat --grep pattern as regex
+        #[arg(long)]
+        regex: bool,
+        /// Show output since: 30s, 5m, 2h, restart, start
+        #[arg(long)]
+        since: Option<String>,
+        /// Lines of context around each match (requires --grep)
+        #[arg(long)]
+        context: Option<u32>,
+        /// Output as JSONL (one JSON object per line)
+        #[arg(long)]
+        json: bool,
     },
     /// Wait for a process condition
     #[command(display_order = 7)]
@@ -260,6 +275,11 @@ async fn main() {
             all,
             timeout,
             lines,
+            grep,
+            regex,
+            since,
+            context,
+            json,
         } => {
             agent_procs::cli::logs::execute(
                 session,
@@ -270,6 +290,11 @@ async fn main() {
                 all,
                 timeout,
                 lines,
+                grep,
+                regex,
+                since,
+                context,
+                json,
             )
             .await
         }
