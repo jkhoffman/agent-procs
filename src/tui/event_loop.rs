@@ -146,6 +146,9 @@ impl TuiEventLoop {
                 }
                 input::FilterAction::Confirm => app.confirm_filter(),
                 input::FilterAction::Cancel => app.cancel_filter(),
+                input::FilterAction::ToggleRegex => {
+                    app.filter_regex = !app.filter_regex;
+                }
             }
         } else {
             let action = input::handle_key(key);

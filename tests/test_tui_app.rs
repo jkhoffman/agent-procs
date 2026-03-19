@@ -96,6 +96,25 @@ fn test_push_output_creates_buffer() {
     assert_eq!(buf.stdout_lines().count(), 1);
 }
 
+#[test]
+fn test_filter_regex_toggle() {
+    let mut app = App::new();
+    assert!(!app.filter_regex);
+    app.filter_regex = true;
+    assert!(app.filter_regex);
+    app.clear_filter();
+    assert!(!app.filter_regex);
+}
+
+#[test]
+fn test_filter_regex_error_resets_on_clear() {
+    let mut app = App::new();
+    app.filter_regex = true;
+    app.filter_regex_error = true;
+    app.clear_filter();
+    assert!(!app.filter_regex_error);
+}
+
 fn make_info(name: &str, state: ProcessState) -> ProcessInfo {
     ProcessInfo {
         name: name.into(),

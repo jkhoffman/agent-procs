@@ -115,7 +115,16 @@ fn draw_output(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let pause_indicator = if app.paused { " [PAUSED]" } else { "" };
     let filter_indicator = match (&app.input_mode, &app.filter) {
-        (InputMode::FilterInput, _) => format!(" /{}", app.filter_buf),
+        (InputMode::FilterInput, _) => {
+            let prefix = if app.filter_regex_error {
+                "/r! "
+            } else if app.filter_regex {
+                "/r "
+            } else {
+                "/ "
+            };
+            format!(" {}{}", prefix, app.filter_buf)
+        }
         (_, Some(pat)) => format!(" [filter: {}]", pat),
         _ => String::new(),
     };
@@ -155,7 +164,7 @@ fn draw_output(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let keys = if app.input_mode == InputMode::FilterInput {
-        " type to filter, Enter confirm, Esc cancel ".to_string()
+        " type to filter, Ctrl-R regex, Enter confirm, Esc cancel ".to_string()
     } else if app.paused {
         " PgUp/u scroll up  PgDn/d scroll down  g top  G bottom  Space unpause  / filter  Esc clear filter ".to_string()
     } else {
