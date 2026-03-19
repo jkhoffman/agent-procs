@@ -206,3 +206,38 @@ fn test_stop_disables_autorestart() {
     let sleeper = procs.iter().find(|p| p["name"] == "sleeper").unwrap();
     assert_eq!(sleeper["state"], "exited");
 }
+
+#[test]
+fn test_manual_restart_writes_annotation() {
+    let ctx = TestContext::new("test-restart-annotation");
+    ctx.cmd()
+        .args([
+            "--session",
+            &ctx.session,
+            "run",
+            "sleep 999",
+            "--name",
+            "worker",
+        ])
+        .assert()
+        .success();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    ctx.cmd()
+        .args(["--session", &ctx.session, "restart", "worker"])
+        .assert()
+        .success();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    let output = ctx
+        .cmd()
+        .args(["--session", &ctx.session, "logs", "worker", "--tail", "10"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("[agent-procs] Restarted (manual)"),
+        "expected restart annotation in logs, got: {}",
+        stdout
+    );
+}

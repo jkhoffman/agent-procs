@@ -407,7 +407,11 @@ impl ProcessManager {
         }
     }
 
-    pub async fn restart_process(&mut self, target: &str) -> Response {
+    pub async fn restart_process(
+        &mut self,
+        target: &str,
+        initial_annotation: Option<String>,
+    ) -> Response {
         let (command, name, cwd, env, port, restart_policy, watch_config) = match self.find(target)
         {
             Some(p) => (
@@ -443,7 +447,7 @@ impl ProcessManager {
                 cwd.as_deref(),
                 env.as_ref(),
                 port,
-                None,
+                initial_annotation,
             )
             .await;
         // Re-attach restart/watch config so manual restart preserves supervisor behavior
@@ -623,7 +627,11 @@ impl ProcessManager {
     /// Re-spawn a process in place, preserving supervisor metadata.
     /// Drains capture tasks, rotates logs, re-spawns, and carries over metadata.
     /// On spawn failure, reinserts a tombstone record with failed=true.
-    pub async fn respawn_in_place(&mut self, target: &str) -> Result<(), String> {
+    pub async fn respawn_in_place(
+        &mut self,
+        target: &str,
+        initial_annotation: Option<String>,
+    ) -> Result<(), String> {
         let proc = self
             .find(target)
             .ok_or_else(|| format!("process not found: {}", target))?;
@@ -675,7 +683,7 @@ impl ProcessManager {
                 cwd.as_deref(),
                 env_opt.as_ref(),
                 port,
-                None,
+                initial_annotation,
             )
             .await;
 
@@ -771,7 +779,7 @@ mod tests {
         pm.refresh_exit_states();
 
         // Respawn
-        let result = pm.respawn_in_place("worker").await;
+        let result = pm.respawn_in_place("worker", None).await;
         assert!(result.is_ok());
 
         // Verify metadata preserved
@@ -812,7 +820,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         pm.refresh_exit_states();
 
-        let result = pm.respawn_in_place("work/er").await;
+        let result = pm.respawn_in_place("work/er", None).await;
         assert!(result.is_err());
 
         // Tombstone should exist

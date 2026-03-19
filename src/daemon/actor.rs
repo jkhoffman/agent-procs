@@ -377,7 +377,13 @@ impl ProcessManagerActor {
                 let _ = reply.send(resp);
             }
             PmCommand::Restart { target, reply } => {
-                let resp = self.pm.restart_process(&target).await;
+                let resp = self
+                    .pm
+                    .restart_process(
+                        &target,
+                        Some("[agent-procs] Restarted (manual)".to_string()),
+                    )
+                    .await;
                 // Recreate file watcher if watch config was preserved
                 if let Response::RunOk { ref name, .. } = resp {
                     let _ = self.setup_watcher(name);
@@ -435,34 +441,29 @@ impl ProcessManagerActor {
         // Capture exit code before respawn (respawn_in_place removes the old record)
         let prev_exit_code = self.pm.find(name).and_then(|p| p.exit_code);
 
+        // Build annotation BEFORE incrementing count so we can read current count
+        let annotation = {
+            let p = self.pm.find(name).unwrap();
+            let count = p.restart_count + 1;
+            let max = p.restart_policy.as_ref().and_then(|rp| rp.max_restarts);
+            let exit = prev_exit_code.map_or("signal".into(), |c: i32| c.to_string());
+            match max {
+                Some(m) => format!(
+                    "[agent-procs] Restarted (exit {}, attempt {}/{})",
+                    exit, count, m
+                ),
+                None => format!("[agent-procs] Restarted (exit {}, attempt {})", exit, count),
+            }
+        };
+
         // Increment count
         if let Some(p) = self.pm.find_mut(name) {
             p.restart_count += 1;
         }
 
-        // Respawn
-        match self.pm.respawn_in_place(name).await {
+        // Respawn with annotation written before child output
+        match self.pm.respawn_in_place(name, Some(annotation)).await {
             Ok(()) => {
-                // Send success annotation to new capture task
-                if let Some(p) = self.pm.find(name) {
-                    let count = p.restart_count;
-                    let max = p.restart_policy.as_ref().and_then(|rp| rp.max_restarts);
-                    let exit = prev_exit_code.map_or("signal".into(), |c: i32| c.to_string());
-                    let msg = match max {
-                        Some(m) => {
-                            format!(
-                                "[agent-procs] Restarted (exit {}, attempt {}/{})",
-                                exit, count, m
-                            )
-                        }
-                        None => {
-                            format!("[agent-procs] Restarted (exit {}, attempt {})", exit, count)
-                        }
-                    };
-                    if let Some(tx) = &p.supervisor_tx {
-                        let _ = tx.send(msg).await;
-                    }
-                }
                 // Recreate file watcher for the new process (old one was
                 // dropped when respawn_in_place removed the process record)
                 let _ = self.setup_watcher(name);
@@ -506,16 +507,16 @@ impl ProcessManagerActor {
             p.failed = false;
         }
 
-        // Respawn
-        match self.pm.respawn_in_place(name).await {
+        // Respawn with annotation written before child output
+        match self
+            .pm
+            .respawn_in_place(
+                name,
+                Some("[agent-procs] File changed, restarted".to_string()),
+            )
+            .await
+        {
             Ok(()) => {
-                if let Some(p) = self.pm.find(name)
-                    && let Some(tx) = &p.supervisor_tx
-                {
-                    let _ = tx
-                        .send("[agent-procs] File changed, restarted".to_string())
-                        .await;
-                }
                 // Recreate watcher for the new process
                 let _ = self.setup_watcher(name);
             }
