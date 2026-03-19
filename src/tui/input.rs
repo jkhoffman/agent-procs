@@ -27,6 +27,7 @@ pub enum FilterAction {
     Backspace,
     Confirm,
     Cancel,
+    ToggleRegex,
 }
 
 pub fn handle_key(key: KeyEvent) -> Action {
@@ -52,6 +53,9 @@ pub fn handle_key(key: KeyEvent) -> Action {
 }
 
 pub fn handle_filter_key(key: KeyEvent) -> FilterAction {
+    if key.code == KeyCode::Char('r') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return FilterAction::ToggleRegex;
+    }
     match key.code {
         KeyCode::Enter => FilterAction::Confirm,
         KeyCode::Backspace => FilterAction::Backspace,

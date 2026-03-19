@@ -8,6 +8,7 @@
 //! [`stream_responses`] supports streaming commands like `logs --follow`.
 
 pub mod down;
+pub mod log_search;
 pub mod logs;
 pub mod restart;
 pub mod run;

@@ -31,6 +31,18 @@ agent-procs status
 
 # Stop it
 agent-procs stop server
+
+# Search for errors across all processes
+agent-procs logs --all --grep "error"
+
+# Errors since last restart, with context
+agent-procs logs server --grep "error" --since restart --context 3
+
+# Stream only matching lines live
+agent-procs logs server --follow --grep "panic" --timeout 30
+
+# JSON output for agent consumption
+agent-procs logs --all --grep "error" --json
 ```
 
 ## Config file
@@ -129,7 +141,7 @@ agent-procs run "node server.js" --name api --port 3001 --proxy
 | `stop-all` | Stop all processes |
 | `restart <name>` | Restart a process |
 | `status [--json]` | Show all process statuses |
-| `logs <name> [--tail N] [--follow] [--stderr] [--all]` | View process output |
+| `logs <name> [--tail N] [--follow] [--stderr] [--all] [--grep PAT] [--regex] [--since SPEC] [--context N] [--json]` | View/search process output |
 | `wait <name> --until <pattern> [--regex] [--timeout N]` | Wait for output pattern |
 | `wait <name> --exit [--timeout N]` | Wait for process to exit |
 | `up [--only X,Y] [--config path] [--proxy]` | Start from config file |
@@ -175,6 +187,38 @@ agent-procs run "npm run dev" --name server --watch "src/**" --watch "config/*"
 - Add `--watch-ignore "*.log"` for additional ignore patterns
 - Watch restarts reset the restart count (they're intentional, not crashes)
 - File changes can revive a `Failed` process
+
+## Log search
+
+Search and filter process output efficiently.
+
+```bash
+# Substring match (default)
+agent-procs logs server --grep "error"
+
+# Regex match
+agent-procs logs server --grep "error|panic|warn" --regex
+
+# Last 10 errors
+agent-procs logs server --grep "error" --tail 10
+
+# Errors since last restart, with 3 lines of context
+agent-procs logs server --grep "error" --since restart --context 3
+
+# All output since process started
+agent-procs logs server --since start
+
+# Output from the last 5 minutes
+agent-procs logs server --since 5m
+
+# JSONL output for programmatic consumption
+agent-procs logs server --grep "error" --json
+
+# Search all processes
+agent-procs logs --all --grep "timeout" --since 1m
+```
+
+`--since` accepts: `Ns` (seconds), `Nm` (minutes), `Nh` (hours), `restart` (since last restart), `start` (all output). Duration estimates assume uniform log throughput.
 
 ## Sessions
 

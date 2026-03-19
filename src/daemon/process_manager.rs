@@ -1,3 +1,4 @@
+use crate::daemon::log_index::{self, IndexWriter, idx_path_for};
 use crate::daemon::log_writer::{self, OutputLine};
 use crate::daemon::port_allocator::PortAllocator;
 use crate::paths;
@@ -9,8 +10,9 @@ use crate::session::IdCounter;
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 use tokio::sync::broadcast;
 
@@ -81,6 +83,7 @@ impl ProcessManager {
         cwd: Option<&str>,
         env: Option<&HashMap<String, String>>,
         port: Option<u16>,
+        initial_annotation: Option<String>,
     ) -> Response {
         let id = self.id_counter.next_id();
         let name = name.unwrap_or_else(|| id.clone());
@@ -185,6 +188,72 @@ impl ProcessManager {
         // Shared sequence counter for interleaved ordering across streams
         let seq_counter = Arc::new(AtomicU64::new(0));
 
+        // Create stdout log file and index externally so we can write
+        // the initial annotation before either capture task starts.
+        let stdout_path = log_dir.join(format!("{}.stdout", name));
+        let mut stdout_file = match tokio::fs::File::create(&stdout_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                return Response::Error {
+                    code: ErrorCode::General,
+                    message: format!("cannot create stdout log: {}", e),
+                };
+            }
+        };
+        let stdout_idx_path = idx_path_for(&stdout_path);
+        let mut stdout_idx = match IndexWriter::create(&stdout_idx_path, 0) {
+            Ok(w) => w,
+            Err(e) => {
+                return Response::Error {
+                    code: ErrorCode::General,
+                    message: format!("cannot create stdout index: {}", e),
+                };
+            }
+        };
+
+        // Write initial annotation at seq 0 before any capture task starts
+        let mut stdout_bytes_written: u64 = 0;
+        if let Some(ref annotation) = initial_annotation {
+            let _ = stdout_idx.append(log_index::IndexRecord {
+                byte_offset: 0,
+                seq: 0,
+            });
+            let _ = stdout_idx.flush();
+            let _ = stdout_file.write_all(annotation.as_bytes()).await;
+            let _ = stdout_file.write_all(b"\n").await;
+            let _ = stdout_file.flush().await;
+            seq_counter.store(1, Ordering::Relaxed);
+            stdout_bytes_written = annotation.len() as u64 + 1;
+            let _ = self.output_tx.send(OutputLine {
+                process: name.clone(),
+                stream: ProtoStream::Stdout,
+                line: annotation.clone(),
+            });
+        }
+
+        // Create stderr log file and index (seq_base reflects annotation if present)
+        let stderr_path = log_dir.join(format!("{}.stderr", name));
+        let stderr_file = match tokio::fs::File::create(&stderr_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                return Response::Error {
+                    code: ErrorCode::General,
+                    message: format!("cannot create stderr log: {}", e),
+                };
+            }
+        };
+        let stderr_idx_path = idx_path_for(&stderr_path);
+        let stderr_seq_base = seq_counter.load(Ordering::Relaxed);
+        let stderr_idx = match IndexWriter::create(&stderr_idx_path, stderr_seq_base) {
+            Ok(w) => w,
+            Err(e) => {
+                return Response::Error {
+                    code: ErrorCode::General,
+                    message: format!("cannot create stderr index: {}", e),
+                };
+            }
+        };
+
         // Spawn output capture tasks via log_writer
         // Supervisor channel: stdout gets the real sender, stderr gets a dummy
         let (sup_tx, sup_rx_stdout) = tokio::sync::mpsc::channel::<String>(16);
@@ -196,8 +265,9 @@ impl ProcessManager {
         if let Some(stdout) = child.stdout.take() {
             let tx = self.output_tx.clone();
             let pname = name.clone();
-            let path = log_dir.join(format!("{}.stdout", name));
+            let path = stdout_path;
             let seq = Arc::clone(&seq_counter);
+            let bytes_written = stdout_bytes_written;
             let handle = tokio::spawn(async move {
                 log_writer::capture_output(
                     stdout,
@@ -209,6 +279,9 @@ impl ProcessManager {
                     log_writer::DEFAULT_MAX_ROTATED_FILES,
                     seq,
                     sup_rx_stdout,
+                    stdout_file,
+                    stdout_idx,
+                    bytes_written,
                 )
                 .await;
             });
@@ -217,7 +290,7 @@ impl ProcessManager {
         if let Some(stderr) = child.stderr.take() {
             let tx = self.output_tx.clone();
             let pname = name.clone();
-            let path = log_dir.join(format!("{}.stderr", name));
+            let path = stderr_path;
             let seq = Arc::clone(&seq_counter);
             let handle = tokio::spawn(async move {
                 log_writer::capture_output(
@@ -230,6 +303,9 @@ impl ProcessManager {
                     log_writer::DEFAULT_MAX_ROTATED_FILES,
                     seq,
                     sup_rx_stderr,
+                    stderr_file,
+                    stderr_idx,
+                    0,
                 )
                 .await;
             });
@@ -331,7 +407,11 @@ impl ProcessManager {
         }
     }
 
-    pub async fn restart_process(&mut self, target: &str) -> Response {
+    pub async fn restart_process(
+        &mut self,
+        target: &str,
+        initial_annotation: Option<String>,
+    ) -> Response {
         let (command, name, cwd, env, port, restart_policy, watch_config) = match self.find(target)
         {
             Some(p) => (
@@ -367,6 +447,7 @@ impl ProcessManager {
                 cwd.as_deref(),
                 env.as_ref(),
                 port,
+                initial_annotation,
             )
             .await;
         // Re-attach restart/watch config so manual restart preserves supervisor behavior
@@ -546,7 +627,11 @@ impl ProcessManager {
     /// Re-spawn a process in place, preserving supervisor metadata.
     /// Drains capture tasks, rotates logs, re-spawns, and carries over metadata.
     /// On spawn failure, reinserts a tombstone record with failed=true.
-    pub async fn respawn_in_place(&mut self, target: &str) -> Result<(), String> {
+    pub async fn respawn_in_place(
+        &mut self,
+        target: &str,
+        initial_annotation: Option<String>,
+    ) -> Result<(), String> {
         let proc = self
             .find(target)
             .ok_or_else(|| format!("process not found: {}", target))?;
@@ -598,6 +683,7 @@ impl ProcessManager {
                 cwd.as_deref(),
                 env_opt.as_ref(),
                 port,
+                initial_annotation,
             )
             .await;
 
@@ -674,7 +760,7 @@ mod tests {
     async fn test_respawn_in_place_preserves_metadata() {
         let mut pm = ProcessManager::new("test-respawn");
         let resp = pm
-            .spawn_process("echo hello", Some("worker".into()), None, None, None)
+            .spawn_process("echo hello", Some("worker".into()), None, None, None, None)
             .await;
         assert!(matches!(resp, Response::RunOk { .. }));
 
@@ -693,7 +779,7 @@ mod tests {
         pm.refresh_exit_states();
 
         // Respawn
-        let result = pm.respawn_in_place("worker").await;
+        let result = pm.respawn_in_place("worker", None).await;
         assert!(result.is_ok());
 
         // Verify metadata preserved
@@ -712,7 +798,7 @@ mod tests {
     async fn test_respawn_in_place_tombstone_on_failure() {
         let mut pm = ProcessManager::new("test-tombstone");
         let resp = pm
-            .spawn_process("echo hello", Some("worker".into()), None, None, None)
+            .spawn_process("echo hello", Some("worker".into()), None, None, None, None)
             .await;
         assert!(matches!(resp, Response::RunOk { .. }));
 
@@ -734,7 +820,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         pm.refresh_exit_states();
 
-        let result = pm.respawn_in_place("work/er").await;
+        let result = pm.respawn_in_place("work/er", None).await;
         assert!(result.is_err());
 
         // Tombstone should exist
@@ -905,5 +991,64 @@ mod tests {
         let (restartable, exhausted) = pm.classify_restart_candidates();
         assert_eq!(restartable, vec!["always-on"]);
         assert!(exhausted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_spawn_with_initial_annotation() {
+        let mut pm = ProcessManager::new("test-annotation");
+        let resp = pm
+            .spawn_process(
+                "echo hello",
+                Some("annotated".into()),
+                None,
+                None,
+                None,
+                Some("[agent-procs] Restarted (manual)".to_string()),
+            )
+            .await;
+        assert!(matches!(resp, Response::RunOk { .. }));
+
+        // Wait for the process to exit
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        pm.refresh_exit_states();
+
+        // Drop supervisor sender so capture task can finish draining
+        if let Some(proc) = pm.find_mut("annotated") {
+            proc.supervisor_tx = None;
+        }
+
+        // Await capture task JoinHandles so log files and indexes are flushed
+        if let Some(proc) = pm.find_mut("annotated") {
+            let handles = std::mem::take(&mut proc.capture_handles);
+            for h in handles {
+                let _ = h.await;
+            }
+        }
+
+        let log_dir = crate::paths::log_dir(&pm.session);
+        let stdout_path = log_dir.join("annotated.stdout");
+        let content = std::fs::read_to_string(&stdout_path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(
+            lines.len() >= 2,
+            "expected at least annotation + 'hello', got {:?}",
+            lines
+        );
+        assert_eq!(lines[0], "[agent-procs] Restarted (manual)");
+        assert_eq!(lines[1], "hello");
+
+        // Verify index: first entry at seq 0 (annotation), second at seq 1 (hello)
+        let idx_path = crate::daemon::log_index::idx_path_for(&stdout_path);
+        let mut idx = crate::daemon::log_index::IndexReader::open(&idx_path)
+            .unwrap()
+            .unwrap();
+        let r0 = idx.read_record(0).unwrap();
+        assert_eq!(r0.byte_offset, 0);
+        assert_eq!(r0.seq, 0);
+
+        let r1 = idx.read_record(1).unwrap();
+        assert_eq!(r1.seq, 1);
+        // byte_offset should be len("[agent-procs] Restarted (manual)\n") = 33
+        assert_eq!(r1.byte_offset, 33);
     }
 }

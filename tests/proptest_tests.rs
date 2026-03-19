@@ -59,18 +59,24 @@ fn arb_request() -> impl Strategy<Value = Request> {
             any::<bool>(),
             arb_optional_u64(),
             arb_optional_usize(),
+            arb_optional_string(),
+            any::<bool>(),
         )
-            .prop_map(|(target, tail, follow, stderr, all, timeout_secs, lines)| {
-                Request::Logs {
-                    target,
-                    tail,
-                    follow,
-                    stderr,
-                    all,
-                    timeout_secs,
-                    lines,
+            .prop_map(
+                |(target, tail, follow, stderr, all, timeout_secs, lines, grep, regex)| {
+                    Request::Logs {
+                        target,
+                        tail,
+                        follow,
+                        stderr,
+                        all,
+                        timeout_secs,
+                        lines,
+                        grep,
+                        regex,
+                    }
                 }
-            }),
+            ),
         (
             any::<String>(),
             arb_optional_string(),

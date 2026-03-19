@@ -110,6 +110,8 @@ pub async fn run(session: &str, socket_path: &Path) -> std::io::Result<()> {
                     stderr,
                     timeout_secs,
                     lines,
+                    ref grep,
+                    regex,
                     ..
                 } = request
                 {
@@ -117,6 +119,7 @@ pub async fn run(session: &str, socket_path: &Path) -> std::io::Result<()> {
                     let max_lines = lines;
                     let target_filter = target.clone();
                     let show_all = all;
+                    let grep_pattern = grep.clone();
 
                     handle_follow_stream(
                         &writer,
@@ -126,6 +129,8 @@ pub async fn run(session: &str, socket_path: &Path) -> std::io::Result<()> {
                         stderr,
                         timeout_secs,
                         max_lines,
+                        grep_pattern,
+                        regex,
                     )
                     .await;
                     continue; // Don't call handle_request
@@ -156,6 +161,9 @@ impl Drop for ConnectionGuard {
     }
 }
 
+type MatchPredicate = Option<Box<dyn Fn(&str) -> bool + Send + Sync>>;
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_follow_stream(
     writer: &Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     mut output_rx: broadcast::Receiver<super::log_writer::OutputLine>,
@@ -164,7 +172,28 @@ async fn handle_follow_stream(
     stderr_only: bool,
     timeout_secs: Option<u64>,
     max_lines: Option<usize>,
+    grep: Option<String>,
+    use_regex: bool,
 ) {
+    let match_predicate: MatchPredicate = match grep {
+        Some(ref pattern) if use_regex => match regex::Regex::new(pattern) {
+            Ok(re) => Some(Box::new(move |line: &str| re.is_match(line))),
+            Err(e) => {
+                let err = Response::Error {
+                    code: ErrorCode::General,
+                    message: format!("invalid regex in --grep: {}", e),
+                };
+                let _ = send_response(writer, &err).await;
+                return;
+            }
+        },
+        Some(ref pattern) => {
+            let pat = pattern.clone();
+            Some(Box::new(move |line: &str| line.contains(pat.as_str())))
+        }
+        None => None,
+    };
+
     let mut line_count: usize = 0;
 
     let stream_loop = async {
@@ -183,6 +212,12 @@ async fn handle_follow_stream(
                     if !stderr_only
                         && (!all || target.is_some())
                         && output_line.stream != protocol::Stream::Stdout
+                    {
+                        continue;
+                    }
+
+                    if let Some(ref predicate) = match_predicate
+                        && !predicate(&output_line.line)
                     {
                         continue;
                     }

@@ -1,21 +1,10 @@
+use crate::disk_log_reader::DiskLogReader;
 use crate::protocol::{ProcessInfo, Stream};
-use crate::tui::disk_log_reader::DiskLogReader;
 use std::collections::{HashMap, VecDeque};
 
+pub use crate::disk_log_reader::{LineSource, StreamMode};
+
 const MAX_BUFFER_LINES: usize = 10_000;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StreamMode {
-    Stdout,
-    Stderr,
-    Both,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LineSource {
-    Stdout,
-    Stderr,
-}
 
 /// Single ring buffer storing all output with source tags.
 /// Stdout/stderr views are filtered from the same data — no duplication.
@@ -109,6 +98,7 @@ pub enum InputMode {
     FilterInput,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     pub processes: Vec<ProcessInfo>,
     pub selected: usize,
@@ -129,6 +119,10 @@ pub struct App {
     pub disk_readers: HashMap<String, DiskLogReader>,
     /// Cached filtered indices for filtered disk scrollback.
     pub filtered_indices: HashMap<String, FilteredIndex>,
+    /// Whether the filter uses regex matching (true) or substring matching (false).
+    pub filter_regex: bool,
+    /// Whether the current regex pattern is invalid.
+    pub filter_regex_error: bool,
 }
 
 impl Default for App {
@@ -154,6 +148,8 @@ impl App {
             visible_height: 20,
             disk_readers: HashMap::new(),
             filtered_indices: HashMap::new(),
+            filter_regex: false,
+            filter_regex_error: false,
         }
     }
 
@@ -472,13 +468,32 @@ impl App {
 
     /// Build or rebuild the filtered index for a process.
     fn build_filtered_index(&mut self, name: &str) {
+        use crate::disk_log_reader::MatchMode;
+
         let Some(filter) = self.filter.clone() else {
             return;
         };
         let mode = self.stream_mode;
 
+        let match_mode = if self.filter_regex {
+            match regex::Regex::new(&filter) {
+                Ok(re) => {
+                    self.filter_regex_error = false;
+                    MatchMode::Regex(re)
+                }
+                Err(_) => {
+                    self.filter_regex_error = true;
+                    self.filtered_indices.remove(name);
+                    return;
+                }
+            }
+        } else {
+            self.filter_regex_error = false;
+            MatchMode::Substring(filter.clone())
+        };
+
         let matching_lines = if let Some(reader) = self.disk_readers.get_mut(name) {
-            reader.scan_matching_lines(&filter, mode)
+            reader.scan_matching_lines_mode(&match_mode, mode)
         } else {
             Vec::new()
         };
@@ -538,6 +553,8 @@ impl App {
         self.filter = None;
         self.filter_buf.clear();
         self.filtered_indices.clear();
+        self.filter_regex = false;
+        self.filter_regex_error = false;
     }
 
     pub fn push_output(&mut self, process: &str, stream: Stream, line: &str) {
@@ -559,12 +576,23 @@ impl App {
 
     /// Scan new disk lines since last scan and append matches to the filtered index.
     fn update_filtered_index(&mut self, process: &str) {
+        use crate::disk_log_reader::MatchMode;
+
         let Some(fi) = self.filtered_indices.get(process) else {
             return;
         };
         let filter = fi.filter.clone();
         let mode = fi.stream_mode;
         let scanned_up_to = fi.scanned_up_to;
+
+        let match_mode = if self.filter_regex {
+            match regex::Regex::new(&filter) {
+                Ok(re) => MatchMode::Regex(re),
+                Err(_) => return, // already flagged in build
+            }
+        } else {
+            MatchMode::Substring(filter)
+        };
 
         let reader = match self.disk_readers.get_mut(process) {
             Some(r) => r,
@@ -581,7 +609,7 @@ impl App {
             return;
         }
 
-        let new_matches = reader.scan_matching_lines_from(&filter, mode, scanned_up_to);
+        let new_matches = reader.scan_matching_lines_mode_from(&match_mode, mode, scanned_up_to);
 
         let fi = self.filtered_indices.get_mut(process).unwrap();
         fi.matching_lines.extend(new_matches);
@@ -798,7 +826,7 @@ mod tests {
     #[test]
     fn test_visible_lines_with_disk_reader() {
         use crate::daemon::log_index::{IndexRecord, IndexWriter, idx_path_for};
-        use crate::tui::disk_log_reader::DiskLogReader;
+        use crate::disk_log_reader::DiskLogReader;
 
         let dir = tempfile::tempdir().unwrap();
 

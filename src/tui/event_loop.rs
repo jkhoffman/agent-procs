@@ -146,6 +146,9 @@ impl TuiEventLoop {
                 }
                 input::FilterAction::Confirm => app.confirm_filter(),
                 input::FilterAction::Cancel => app.cancel_filter(),
+                input::FilterAction::ToggleRegex => {
+                    app.filter_regex = !app.filter_regex;
+                }
             }
         } else {
             let action = input::handle_key(key);
@@ -256,6 +259,8 @@ pub async fn output_stream_reader(session: &str, tx: mpsc::Sender<AppEvent>) {
         all: true,
         timeout_secs: None,
         lines: None,
+        grep: None,
+        regex: false,
     };
     let mut json = match serde_json::to_string(&req) {
         Ok(j) => j,

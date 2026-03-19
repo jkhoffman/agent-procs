@@ -8,7 +8,7 @@
 //! [`ui`] for rendering.
 
 pub mod app;
-pub mod disk_log_reader;
+pub use crate::disk_log_reader;
 pub mod event_loop;
 pub mod input;
 pub mod ui;
