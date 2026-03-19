@@ -5,10 +5,22 @@
 //! memory.
 
 use crate::daemon::log_index::{IndexReader, idx_path_for};
-use crate::tui::app::LineSource;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StreamMode {
+    Stdout,
+    Stderr,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineSource {
+    Stdout,
+    Stderr,
+}
 
 /// Info about a single log segment (one log file + its index).
 #[derive(Clone)]
@@ -27,8 +39,6 @@ struct SegmentCache {
 
 /// How long to cache segment enumerations before re-probing the filesystem.
 const SEGMENT_CACHE_TTL_MS: u128 = 500;
-
-use crate::tui::app::StreamMode;
 
 /// Provides random-access line reading from disk log files using the sidecar
 /// `.idx` index.  Handles rotated files (`.1`, `.2`, ...) transparently.

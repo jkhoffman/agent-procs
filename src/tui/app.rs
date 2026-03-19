@@ -1,21 +1,10 @@
+use crate::disk_log_reader::DiskLogReader;
 use crate::protocol::{ProcessInfo, Stream};
-use crate::tui::disk_log_reader::DiskLogReader;
 use std::collections::{HashMap, VecDeque};
 
+pub use crate::disk_log_reader::{LineSource, StreamMode};
+
 const MAX_BUFFER_LINES: usize = 10_000;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StreamMode {
-    Stdout,
-    Stderr,
-    Both,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LineSource {
-    Stdout,
-    Stderr,
-}
 
 /// Single ring buffer storing all output with source tags.
 /// Stdout/stderr views are filtered from the same data — no duplication.
@@ -798,7 +787,7 @@ mod tests {
     #[test]
     fn test_visible_lines_with_disk_reader() {
         use crate::daemon::log_index::{IndexRecord, IndexWriter, idx_path_for};
-        use crate::tui::disk_log_reader::DiskLogReader;
+        use crate::disk_log_reader::DiskLogReader;
 
         let dir = tempfile::tempdir().unwrap();
 
