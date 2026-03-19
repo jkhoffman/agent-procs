@@ -494,8 +494,10 @@ impl DiskLogReader {
                 break;
             }
             let idx_path = idx_path_for(&log_path);
-            let line_count = idx_line_count(&idx_path)
-                .unwrap_or_else(|| count_lines_in_file(&log_path).unwrap_or(0));
+            let line_count = match idx_line_count(&idx_path) {
+                Some(n) if n > 0 => n,
+                _ => count_lines_in_file(&log_path).unwrap_or(0),
+            };
             rotated.push((
                 n,
                 Segment {
@@ -512,8 +514,11 @@ impl DiskLogReader {
 
         if base.exists() {
             let idx_path = idx_path_for(&base);
-            let line_count = idx_line_count(&idx_path)
-                .unwrap_or_else(|| count_lines_in_file(&base).unwrap_or(0));
+            let line_count = match idx_line_count(&idx_path) {
+                Some(n) if n > 0 => n,
+                // Index missing or empty (possibly unflushed) — fall back to line scan
+                _ => count_lines_in_file(&base).unwrap_or(0),
+            };
             segments.push(Segment {
                 log_path: base,
                 idx_path,
@@ -584,23 +589,23 @@ fn read_lines_from_segment(
     // Try indexed read
     if let Ok(Some(mut idx_reader)) = IndexReader::open(idx_path) {
         let records = idx_reader.read_range(start, count)?;
-        if records.is_empty() {
-            return Ok(Vec::new());
-        }
-        let file = std::fs::File::open(log_path)?;
-        let mut reader = BufReader::new(file);
-        // Seek to first record and read sequentially (records are contiguous)
-        reader.seek(SeekFrom::Start(records[0].byte_offset))?;
-        let mut result = Vec::with_capacity(records.len());
-        for _ in 0..records.len() {
-            let mut line = String::new();
-            reader.read_line(&mut line)?;
-            if line.ends_with('\n') {
-                line.pop();
+        if !records.is_empty() {
+            let file = std::fs::File::open(log_path)?;
+            let mut reader = BufReader::new(file);
+            // Seek to first record and read sequentially (records are contiguous)
+            reader.seek(SeekFrom::Start(records[0].byte_offset))?;
+            let mut result = Vec::with_capacity(records.len());
+            for _ in 0..records.len() {
+                let mut line = String::new();
+                reader.read_line(&mut line)?;
+                if line.ends_with('\n') {
+                    line.pop();
+                }
+                result.push(line);
             }
-            result.push(line);
+            return Ok(result);
         }
-        return Ok(result);
+        // Index exists but has no records for this range — fall through to sequential scan
     }
 
     // Fallback: sequential scan
