@@ -298,26 +298,30 @@ fn test_proxy_drops_route_after_process_exit() {
     }
     .expect("could not parse proxy port");
 
-    std::thread::sleep(Duration::from_secs(2));
-
-    let curl_output = std::process::Command::new("curl")
-        .args([
-            "-s",
-            "--max-time",
-            "5",
-            "-H",
-            &format!("Host: web.localhost:{}", proxy_port),
-            &format!("http://127.0.0.1:{}/", proxy_port),
-        ])
-        .output()
-        .unwrap();
-    assert!(curl_output.status.success());
-    let body = String::from_utf8_lossy(&curl_output.stdout);
-    assert!(
-        body.contains("no running process named 'web'"),
-        "expected stale route to be removed, got: {}",
-        body
-    );
+    // Wait for exit detection + route cleanup (tick-based, may need retries)
+    let mut found = false;
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_millis(500));
+        let curl_output = std::process::Command::new("curl")
+            .args([
+                "-s",
+                "--max-time",
+                "5",
+                "-H",
+                &format!("Host: web.localhost:{}", proxy_port),
+                &format!("http://127.0.0.1:{}/", proxy_port),
+            ])
+            .output()
+            .unwrap();
+        if curl_output.status.success() {
+            let body = String::from_utf8_lossy(&curl_output.stdout);
+            if body.contains("no running process named 'web'") {
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found, "expected stale route to be removed within 5 seconds");
 
     let _ = ctx
         .cmd()
