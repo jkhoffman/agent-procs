@@ -68,6 +68,8 @@ async fn execute_follow(
         all: all || target.is_none(),
         timeout_secs: timeout.or(Some(30)), // CLI default; TUI passes None for infinite
         lines,
+        grep: None,
+        regex: false,
     };
 
     let show_prefix = all || target.is_none();

@@ -93,6 +93,8 @@ fn bench_protocol_serde(c: &mut Criterion) {
             all: false,
             timeout_secs: Some(30),
             lines: None,
+            grep: None,
+            regex: false,
         },
     ];
 

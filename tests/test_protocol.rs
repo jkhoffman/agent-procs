@@ -262,3 +262,33 @@ fn test_run_request_without_restart_watch_backward_compat() {
         panic!("expected Run");
     }
 }
+
+#[test]
+fn test_logs_request_with_grep_fields() {
+    let req = Request::Logs {
+        target: Some("server".into()),
+        tail: 50,
+        follow: true,
+        stderr: false,
+        all: false,
+        timeout_secs: None,
+        lines: None,
+        grep: Some("error".into()),
+        regex: true,
+    };
+    let json = serde_json::to_string(&req).unwrap();
+    let parsed: Request = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed, req);
+}
+
+#[test]
+fn test_logs_request_backward_compat_no_grep() {
+    let json = r#"{"type":"Logs","target":"web","tail":100,"follow":false,"stderr":false,"all":false,"timeout_secs":null,"lines":null}"#;
+    let parsed: Request = serde_json::from_str(json).unwrap();
+    if let Request::Logs { grep, regex, .. } = parsed {
+        assert!(grep.is_none());
+        assert!(!regex);
+    } else {
+        panic!("expected Logs");
+    }
+}

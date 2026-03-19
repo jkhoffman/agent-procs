@@ -183,6 +183,10 @@ pub enum Request {
         timeout_secs: Option<u64>,
         #[serde(default)]
         lines: Option<usize>,
+        #[serde(default)]
+        grep: Option<String>,
+        #[serde(default)]
+        regex: bool,
     },
     Wait {
         target: String,
@@ -358,6 +362,8 @@ mod tests {
                 all: false,
                 timeout_secs: Some(30),
                 lines: None,
+                grep: None,
+                regex: false,
             },
             Request::Wait {
                 target: "test".into(),

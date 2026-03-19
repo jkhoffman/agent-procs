@@ -256,6 +256,8 @@ pub async fn output_stream_reader(session: &str, tx: mpsc::Sender<AppEvent>) {
         all: true,
         timeout_secs: None,
         lines: None,
+        grep: None,
+        regex: false,
     };
     let mut json = match serde_json::to_string(&req) {
         Ok(j) => j,
