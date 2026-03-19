@@ -38,12 +38,12 @@ fn test_grep_returns_only_matching_lines() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Filter out "--" separator lines that appear between non-adjacent matches
-    let lines: Vec<&str> = stdout.lines().filter(|l| *l != "--").collect();
+    // Without --context, no separators should appear
+    let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(
         lines.len(),
         2,
-        "expected 2 matching lines, got {}: {:?}",
+        "expected 2 matching lines (no separators without --context), got {}: {:?}",
         lines.len(),
         lines
     );
@@ -145,12 +145,12 @@ fn test_grep_tail_returns_last_n_matches() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Filter out "--" separator lines that appear between non-adjacent matches
-    let lines: Vec<&str> = stdout.lines().filter(|l| *l != "--").collect();
+    // Without --context, no separators should appear
+    let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(
         lines.len(),
         2,
-        "expected 2 tail matches, got {}: {:?}",
+        "expected 2 tail matches (no separators without --context), got {}: {:?}",
         lines.len(),
         lines
     );

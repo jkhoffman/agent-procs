@@ -366,7 +366,7 @@ fn source_name(source: LineSource) -> &'static str {
 ///
 /// Text mode: prints lines with `--` separators between non-adjacent groups.
 /// JSON mode: JSONL with process, `line_number`, stream, text, context fields.
-pub fn print_results(results: &[SearchResult], json: bool, _context: Option<u32>) {
+pub fn print_results(results: &[SearchResult], json: bool) {
     if json {
         print_results_json(results);
     } else {
@@ -393,6 +393,8 @@ fn print_results_json(results: &[SearchResult]) {
 
 fn print_results_text(results: &[SearchResult]) {
     let multi_process = results.len() > 1;
+    // Only print -- separators when context expansion was used
+    let has_context = results.iter().any(|r| r.lines.iter().any(|l| l.is_context));
 
     for (ri, result) in results.iter().enumerate() {
         if result.lines.is_empty() {
@@ -406,8 +408,9 @@ fn print_results_text(results: &[SearchResult]) {
 
         let mut prev_line_number: Option<usize> = None;
         for line in &result.lines {
-            // Print separator between non-adjacent groups
-            if let Some(prev) = prev_line_number
+            // Print separator between non-adjacent groups (only with --context)
+            if has_context
+                && let Some(prev) = prev_line_number
                 && line.line_number > prev + 1
             {
                 println!("--");

@@ -83,7 +83,7 @@ pub async fn execute(
 
     match crate::cli::log_search::search_process(&mut reader, target, &params, uptime_secs) {
         Ok(result) => {
-            crate::cli::log_search::print_results(&[result], json, context);
+            crate::cli::log_search::print_results(&[result], json);
             0
         }
         Err(e) => {
@@ -202,7 +202,7 @@ fn replay_follow_tail(
             }
         }
         if !results.is_empty() {
-            crate::cli::log_search::print_results(&results, json, None);
+            crate::cli::log_search::print_results(&results, json);
         }
         return None;
     }
@@ -213,7 +213,7 @@ fn replay_follow_tail(
     match crate::cli::log_search::search_process(&mut reader, target, &params, None) {
         Ok(result) => {
             if !result.lines.is_empty() {
-                crate::cli::log_search::print_results(&[result], json, None);
+                crate::cli::log_search::print_results(&[result], json);
             }
             None
         }
@@ -250,7 +250,7 @@ async fn search_all_processes(session: &str, params: &SearchParams, json: bool) 
         }
     }
 
-    crate::cli::log_search::print_results(&results, json, params.context);
+    crate::cli::log_search::print_results(&results, json);
     0
 }
 

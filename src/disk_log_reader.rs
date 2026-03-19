@@ -466,17 +466,28 @@ impl DiskLogReader {
     /// Given a stdout line index, find the corresponding stderr line index
     /// by looking up the stdout line's sequence number and finding the first
     /// stderr line with sequence >= that value.
+    ///
+    /// Uses binary search (O(log n) index reads) since sequence numbers are
+    /// monotonically increasing.
     pub fn find_stderr_position_by_stdout_seq(&mut self, stdout_line: usize) -> io::Result<usize> {
         let stdout_seq = self.get_sequence_number(LineSource::Stdout, stdout_line)?;
         let stderr_total = self.line_count(LineSource::Stderr);
-        for i in 0..stderr_total {
-            if let Ok(seq) = self.get_sequence_number(LineSource::Stderr, i)
-                && seq >= stdout_seq
-            {
-                return Ok(i);
+        if stderr_total == 0 {
+            return Ok(0);
+        }
+
+        // Binary search for first stderr line with seq >= stdout_seq
+        let mut lo: usize = 0;
+        let mut hi: usize = stderr_total;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            match self.get_sequence_number(LineSource::Stderr, mid) {
+                Ok(seq) if seq < stdout_seq => lo = mid + 1,
+                Ok(_) => hi = mid,
+                Err(_) => lo = mid + 1, // skip unreadable entries
             }
         }
-        Ok(stderr_total) // all stderr is before the boundary
+        Ok(lo)
     }
 
     /// Probe the filesystem for log segments of a given stream, ordered oldest first.
