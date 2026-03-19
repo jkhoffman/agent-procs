@@ -9,6 +9,21 @@ use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// Pattern matching mode for log line filtering.
+pub enum MatchMode {
+    Substring(String),
+    Regex(regex::Regex),
+}
+
+impl MatchMode {
+    pub fn is_match(&self, line: &str) -> bool {
+        match self {
+            MatchMode::Substring(pat) => line.contains(pat.as_str()),
+            MatchMode::Regex(re) => re.is_match(line),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StreamMode {
     Stdout,
@@ -174,6 +189,81 @@ impl DiskLogReader {
             StreamMode::Stderr => self.scan_single_stream(filter, LineSource::Stderr, start_from),
             StreamMode::Both => self.scan_interleaved(filter, start_from),
         }
+    }
+
+    /// Scan all lines in the given stream mode and return indices of lines
+    /// matching the `MatchMode`. The returned indices are positions within
+    /// the mode's address space (single-stream or interleaved).
+    pub fn scan_matching_lines_mode(&mut self, mode: &MatchMode, stream: StreamMode) -> Vec<usize> {
+        self.scan_matching_lines_mode_from(mode, stream, 0)
+    }
+
+    /// Scan lines starting from `start_from` in the given stream mode using
+    /// a `MatchMode`. Can be used for incremental updates.
+    pub fn scan_matching_lines_mode_from(
+        &mut self,
+        mode: &MatchMode,
+        stream: StreamMode,
+        start_from: usize,
+    ) -> Vec<usize> {
+        match stream {
+            StreamMode::Stdout => {
+                self.scan_single_stream_mode(mode, LineSource::Stdout, start_from)
+            }
+            StreamMode::Stderr => {
+                self.scan_single_stream_mode(mode, LineSource::Stderr, start_from)
+            }
+            StreamMode::Both => self.scan_interleaved_mode(mode, start_from),
+        }
+    }
+
+    fn scan_single_stream_mode(
+        &mut self,
+        mode: &MatchMode,
+        source: LineSource,
+        start_from: usize,
+    ) -> Vec<usize> {
+        let total = self.line_count(source);
+        if total <= start_from {
+            return Vec::new();
+        }
+        let mut matching = Vec::new();
+        const CHUNK: usize = 1000;
+        let mut offset = start_from;
+        while offset < total {
+            let count = CHUNK.min(total - offset);
+            if let Ok(lines) = self.read_lines(source, offset, count) {
+                for (i, line) in lines.iter().enumerate() {
+                    if mode.is_match(line) {
+                        matching.push(offset + i);
+                    }
+                }
+            }
+            offset += count;
+        }
+        matching
+    }
+
+    fn scan_interleaved_mode(&mut self, mode: &MatchMode, start_from: usize) -> Vec<usize> {
+        let total = self.line_count_both();
+        if total <= start_from {
+            return Vec::new();
+        }
+        let mut matching = Vec::new();
+        const CHUNK: usize = 1000;
+        let mut offset = start_from;
+        while offset < total {
+            let count = CHUNK.min(total - offset);
+            if let Ok(lines) = self.read_interleaved(offset, count) {
+                for (i, (_, line)) in lines.iter().enumerate() {
+                    if mode.is_match(line) {
+                        matching.push(offset + i);
+                    }
+                }
+            }
+            offset += count;
+        }
+        matching
     }
 
     fn scan_single_stream(
@@ -692,5 +782,42 @@ mod tests {
         let mut reader = DiskLogReader::new(dir.path().to_path_buf(), "test".to_string());
         assert_eq!(reader.line_count(LineSource::Stdout), 0);
         assert_eq!(reader.line_count_both(), 0);
+    }
+
+    #[test]
+    fn test_scan_matching_lines_regex() {
+        let dir = tempfile::tempdir().unwrap();
+        create_log_with_index(
+            dir.path(),
+            "test.stdout",
+            &[
+                "hello world",
+                "ERROR: timeout",
+                "warning: slow",
+                "ERROR: crash",
+                "all good",
+            ],
+            0,
+        );
+        let mut reader = DiskLogReader::new(dir.path().to_path_buf(), "test".to_string());
+        let re = regex::Regex::new("ERROR|warning").unwrap();
+        let mode = MatchMode::Regex(re);
+        let matches = reader.scan_matching_lines_mode(&mode, StreamMode::Stdout);
+        assert_eq!(matches, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_scan_matching_lines_substring_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        create_log_with_index(
+            dir.path(),
+            "test.stdout",
+            &["hello world", "ERROR: timeout", "hello again"],
+            0,
+        );
+        let mut reader = DiskLogReader::new(dir.path().to_path_buf(), "test".to_string());
+        let mode = MatchMode::Substring("hello".to_string());
+        let matches = reader.scan_matching_lines_mode(&mode, StreamMode::Stdout);
+        assert_eq!(matches, vec![0, 2]);
     }
 }
