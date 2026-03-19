@@ -51,6 +51,14 @@ agent-procs logs server --stderr      # stderr only
 agent-procs logs --all --tail 30      # all processes interleaved
 agent-procs logs server --follow --timeout 10   # stream live for 10s
 
+# Search logs
+agent-procs logs server --grep "error"                        # substring match
+agent-procs logs server --grep "error|panic" --regex          # regex match
+agent-procs logs server --grep "error" --since restart        # since last restart
+agent-procs logs server --grep "error" --context 3            # with context lines
+agent-procs logs --all --grep "timeout" --since 1m            # search all processes
+agent-procs logs server --grep "error" --json                 # JSON output
+
 # Stop
 agent-procs stop server               # one process
 agent-procs stop-all                   # everything in session
@@ -166,6 +174,38 @@ agent-procs run "npm run dev" --name server --watch "src/**" --watch "config/*"
 - Add `--watch-ignore "*.log"` for additional ignore patterns
 - Watch restarts reset the restart count (they're intentional, not crashes)
 - File changes can revive a `Failed` process
+
+## Log search
+
+Search and filter process output efficiently.
+
+```bash
+# Substring match (default)
+agent-procs logs server --grep "error"
+
+# Regex match
+agent-procs logs server --grep "error|panic|warn" --regex
+
+# Last 10 errors
+agent-procs logs server --grep "error" --tail 10
+
+# Errors since last restart, with 3 lines of context
+agent-procs logs server --grep "error" --since restart --context 3
+
+# All output since process started
+agent-procs logs server --since start
+
+# Output from the last 5 minutes
+agent-procs logs server --since 5m
+
+# JSONL output for programmatic consumption
+agent-procs logs server --grep "error" --json
+
+# Search all processes
+agent-procs logs --all --grep "timeout" --since 1m
+```
+
+`--since` accepts: `Ns` (seconds), `Nm` (minutes), `Nh` (hours), `restart` (since last restart), `start` (all output). Duration estimates assume uniform log throughput.
 
 ## Reverse proxy
 
@@ -301,3 +341,5 @@ agent-procs run "go run ./cmd/server" --name api \
 6. **Prefer config files for repeatable setups** — if a project needs the same processes every time, write an `agent-procs.yaml`
 7. **Use `--autorestart` for crash-prone services** — especially databases and network services that may fail transiently
 8. **Use `--watch` during development** — avoids manual restart cycles when editing code
+9. **Use `--grep` to find specific output** — avoids pulling entire logs into context
+10. **Use `--since restart` after restarts** — shows only post-restart output
