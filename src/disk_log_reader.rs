@@ -411,6 +411,74 @@ impl DiskLogReader {
         ))
     }
 
+    /// Scan stdout backward across all segments for the last restart marker.
+    /// Returns the line index (in stdout address space) of the marker, or None.
+    pub fn find_last_restart_marker(&mut self) -> Option<usize> {
+        let total = self.line_count(LineSource::Stdout);
+        if total == 0 {
+            return None;
+        }
+        const CHUNK: usize = 500;
+        let mut offset = total;
+        while offset > 0 {
+            let start = offset.saturating_sub(CHUNK);
+            let count = offset - start;
+            if let Ok(lines) = self.read_lines(LineSource::Stdout, start, count) {
+                for (i, line) in lines.iter().enumerate().rev() {
+                    if line.starts_with("[agent-procs] Restarted")
+                        || line.starts_with("[agent-procs] File changed, restarted")
+                    {
+                        return Some(start + i);
+                    }
+                }
+            }
+            offset = start;
+        }
+        None
+    }
+
+    /// Get the LIDX sequence number for a specific line.
+    fn get_sequence_number(&mut self, source: LineSource, line: usize) -> io::Result<u64> {
+        // Clone segment info to avoid borrow conflict
+        let seg_info: Vec<(std::path::PathBuf, usize)> = self
+            .segments(source)
+            .iter()
+            .map(|s| (s.idx_path.clone(), s.line_count))
+            .collect();
+
+        let mut cumulative = 0;
+        for (idx_path, line_count) in &seg_info {
+            if line < cumulative + line_count {
+                let local_line = line - cumulative;
+                let mut reader = IndexReader::open(idx_path)?
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no index"))?;
+                let records = reader.read_range(local_line, 1)?;
+                return Ok(records[0].seq);
+            }
+            cumulative += line_count;
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "line out of range",
+        ))
+    }
+
+    /// Given a stdout line index, find the corresponding stderr line index
+    /// by looking up the stdout line's sequence number and finding the first
+    /// stderr line with sequence >= that value.
+    pub fn find_stderr_position_by_stdout_seq(&mut self, stdout_line: usize) -> io::Result<usize> {
+        let stdout_seq = self.get_sequence_number(LineSource::Stdout, stdout_line)?;
+        let stderr_total = self.line_count(LineSource::Stderr);
+        for i in 0..stderr_total {
+            if let Ok(seq) = self.get_sequence_number(LineSource::Stderr, i)
+                && seq >= stdout_seq
+            {
+                return Ok(i);
+            }
+        }
+        Ok(stderr_total) // all stderr is before the boundary
+    }
+
     /// Probe the filesystem for log segments of a given stream, ordered oldest first.
     fn discover_segments(log_dir: &Path, process: &str, source: LineSource) -> Vec<Segment> {
         let stream = match source {
@@ -819,5 +887,66 @@ mod tests {
         let mode = MatchMode::Substring("hello".to_string());
         let matches = reader.scan_matching_lines_mode(&mode, StreamMode::Stdout);
         assert_eq!(matches, vec![0, 2]);
+    }
+
+    #[test]
+    fn test_find_restart_marker_backward() {
+        let dir = tempfile::tempdir().unwrap();
+        create_log_with_index(
+            dir.path(),
+            "test.stdout",
+            &[
+                "output line 1",
+                "[agent-procs] Restarted (manual)",
+                "post-restart line 1",
+                "post-restart line 2",
+            ],
+            0,
+        );
+        let mut reader = DiskLogReader::new(dir.path().to_path_buf(), "test".to_string());
+        let marker = reader.find_last_restart_marker();
+        assert_eq!(marker, Some(1)); // line index 1
+    }
+
+    #[test]
+    fn test_find_restart_marker_in_rotated_segment() {
+        let dir = tempfile::tempdir().unwrap();
+        // Rotated segment .1 with the marker
+        create_log_with_index(
+            dir.path(),
+            "test.stdout.1",
+            &[
+                "pre-restart output",
+                "[agent-procs] Restarted (manual)",
+                "early post-restart",
+            ],
+            0,
+        );
+        // Current segment with more post-restart output
+        create_log_with_index(
+            dir.path(),
+            "test.stdout",
+            &["later post-restart line 1", "later post-restart line 2"],
+            3, // seq continues from rotated segment
+        );
+        let mut reader = DiskLogReader::new(dir.path().to_path_buf(), "test".to_string());
+        let marker = reader.find_last_restart_marker();
+        // Marker is in .1 at local line 1. In global address space:
+        // .1 has 3 lines (indices 0,1,2), current has 2 lines (indices 3,4)
+        // marker is at global index 1
+        assert_eq!(marker, Some(1));
+    }
+
+    #[test]
+    fn test_find_restart_marker_no_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        create_log_with_index(
+            dir.path(),
+            "test.stdout",
+            &["just normal output", "more output"],
+            0,
+        );
+        let mut reader = DiskLogReader::new(dir.path().to_path_buf(), "test".to_string());
+        assert_eq!(reader.find_last_restart_marker(), None);
     }
 }
