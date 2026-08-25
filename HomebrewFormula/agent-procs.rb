@@ -1,8 +1,9 @@
 class AgentProcs < Formula
   desc "Concurrent process runner for AI agents"
   homepage "https://github.com/jkhoffman/agent-procs"
-  url "https://github.com/jkhoffman/agent-procs/archive/refs/tags/v0.3.0.tar.gz"
-  # sha256 "PLACEHOLDER" # Update with actual checksum after release
+  url "https://github.com/jkhoffman/agent-procs/archive/6faae0fae78c6255fe8724cf13c70f74993fb524.tar.gz"
+  version "0.6.2"
+  sha256 "64fa7afc14264fd077a73e4bd747c72eb7a38626bbc2b0ec600d06324e6f72e8"
   license "MIT"
 
   depends_on "rust" => :build
@@ -12,6 +13,6 @@ class AgentProcs < Formula
   end
 
   test do
-    assert_match "agent-procs", shell_output("#{bin}/agent-procs --version")
+    assert_equal "agent-procs #{version}\n", shell_output("#{bin}/agent-procs --version")
   end
 end
