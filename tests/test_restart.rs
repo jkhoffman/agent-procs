@@ -89,7 +89,7 @@ fn test_max_restarts_exhausted() {
         .success();
 
     // Wait for restart attempts to exhaust
-    std::thread::sleep(std::time::Duration::from_millis(2000));
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     let output = ctx
         .cmd()
@@ -131,7 +131,7 @@ fn test_watch_restart_on_file_change() {
         .success();
 
     // Let the process start and watcher initialise
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
     // Verify process is running and reported as watched
     let output = ctx
@@ -150,7 +150,7 @@ fn test_watch_restart_on_file_change() {
     std::fs::write(&watched_file, "v2").unwrap();
 
     // Wait for debounce (500ms default) + restart time
-    std::thread::sleep(std::time::Duration::from_millis(2000));
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     // Verify the process is still running (was restarted)
     let output = ctx

@@ -339,7 +339,7 @@ impl DiskLogReader {
         }
 
         // Sort by N descending so highest-N (oldest) comes first
-        rotated.sort_by(|a, b| b.0.cmp(&a.0));
+        rotated.sort_by_key(|(n, _)| std::cmp::Reverse(*n));
         let mut segments: Vec<Segment> = rotated.into_iter().map(|(_, s)| s).collect();
 
         if base.exists() {

@@ -199,12 +199,10 @@ impl TuiEventLoop {
         match mouse.kind {
             MouseEventKind::ScrollUp => app.scroll_up_by(MOUSE_SCROLL_LINES),
             MouseEventKind::ScrollDown => app.scroll_down_by(MOUSE_SCROLL_LINES),
-            MouseEventKind::Down(MouseButton::Left) => {
-                if mouse.column < 22 {
-                    let row = mouse.row.saturating_sub(1) as usize;
-                    if row < app.processes.len() {
-                        app.selected = row;
-                    }
+            MouseEventKind::Down(MouseButton::Left) if mouse.column < 22 => {
+                let row = mouse.row.saturating_sub(1) as usize;
+                if row < app.processes.len() {
+                    app.selected = row;
                 }
             }
             _ => {}
@@ -376,5 +374,58 @@ pub fn init_disk_readers(session: &str, app: &mut App) {
                 app.push_output(proc_name, *stream, &line);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ProcessInfo, ProcessState};
+    use crossterm::event::{KeyModifiers, MouseEvent};
+
+    fn make_process(name: &str) -> ProcessInfo {
+        ProcessInfo {
+            name: name.into(),
+            id: format!("p-{name}"),
+            pid: 100,
+            state: ProcessState::Running,
+            exit_code: None,
+            uptime_secs: Some(10),
+            command: "true".into(),
+            port: None,
+            url: None,
+            restart_count: None,
+            max_restarts: None,
+            restart_policy: None,
+            watched: None,
+        }
+    }
+
+    fn left_click(column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn left_click_selects_only_process_rows_inside_left_pane() {
+        let mut app = App::new();
+        app.update_processes(vec![
+            make_process("a"),
+            make_process("b"),
+            make_process("c"),
+        ]);
+
+        TuiEventLoop::handle_mouse(&mut app, left_click(21, 3));
+        assert_eq!(app.selected, 2);
+
+        TuiEventLoop::handle_mouse(&mut app, left_click(22, 1));
+        assert_eq!(app.selected, 2, "right pane click must not select");
+
+        TuiEventLoop::handle_mouse(&mut app, left_click(21, 4));
+        assert_eq!(app.selected, 2, "row beyond process list must not select");
     }
 }
