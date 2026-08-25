@@ -14,5 +14,6 @@ class AgentProcs < Formula
 
   test do
     assert_equal "agent-procs #{version}\n", shell_output("#{bin}/agent-procs --version")
+    assert_match "_agent-procs() {", shell_output("#{bin}/agent-procs completions bash")
   end
 end
