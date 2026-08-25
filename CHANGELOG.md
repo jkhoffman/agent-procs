@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Restored a warning-free Clippy build on current stable Rust, including a
+  regression test for mouse selection boundaries in the TUI process pane.
+
+### Changed
+
+- Refreshed locked transitive dependencies: `anyhow` 1.0.102 to 1.0.103,
+  `crossbeam-epoch` 0.9.18 to 0.9.20, and the locked `rand` 0.8.5/0.9.2
+  versions to 0.8.6/0.9.3.
+
+### Security
+
+- Documented a narrow, temporary `cargo audit` exception for
+  RUSTSEC-2026-0253 in transitive `lru` 0.16.3. The crate enters through both
+  direct `ratatui` 0.30.0 and `ansi-to-tui` 8.0.1 dependencies via
+  `ratatui-core` 0.1.0; AgentProcs neither depends on `lru` directly nor uses
+  the affected `LruCache::pop` path. The exception is limited to this single
+  advisory until both paths can accept fixed `lru` 0.18.2 or later.
+
+## [0.6.2] - 2026-03-18
+
+### Changed
+
+- Upgraded direct dependencies: `ansi-to-tui` 7 to 8, `crossterm` 0.28 to
+  0.29, `nix` 0.29 to 0.31, `notify` 7 to 8, and `ratatui` 0.29 to 0.30.
+- Regenerated `Cargo.lock` for the upgraded dependency graph.
+- Corrected the package and lockfile version from 0.6.0 to 0.6.2.
+
+## [0.6.1] - 2026-03-18
+
+### Documentation
+
+- Updated the README and agent skill documentation for restart policies, file
+  watching, and reverse-proxy workflows.
+- Renamed `skill/agent-procs.md` to the standard `skill/SKILL.md` path.
+
+> **Release note:** the v0.6.1 tag retained package version 0.6.0, so binaries
+> built from that tag report 0.6.0. Version 0.6.1 was not published to
+> crates.io.
+
 ## [0.6.0] - 2026-03-17
 
 ### Added
@@ -315,7 +358,12 @@ Initial release.
 - CLI `--help` with workflow examples, daemon model, exit codes, and config
   format documentation.
 
-[Unreleased]: https://github.com/jkhoffman/agent-procs/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/jkhoffman/agent-procs/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/jkhoffman/agent-procs/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/jkhoffman/agent-procs/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/jkhoffman/agent-procs/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/jkhoffman/agent-procs/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/jkhoffman/agent-procs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/jkhoffman/agent-procs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jkhoffman/agent-procs/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/jkhoffman/agent-procs/compare/v0.3.0...v0.3.1

@@ -1,9 +1,11 @@
 [advisories]
 # Temporary exception for lru 0.16.3 (RUSTSEC-2026-0253).
-# Dependency path: agent-procs -> ansi-to-tui 8.0.1 -> ratatui-core 0.1.0 -> lru 0.16.3.
+# Dependency paths: agent-procs -> ratatui 0.30.0 -> ratatui-core 0.1.0 -> lru 0.16.3;
+# and agent-procs -> ansi-to-tui 8.0.1 -> ratatui-core 0.1.0 -> lru 0.16.3.
 # AgentProcs does not depend on lru directly or use LruCache::pop.
 # The affected condition requires a panicking key Drop during pop/unwinding (for example,
 # through catch_unwind), followed by a later cache eviction; AgentProcs does not exercise it.
 # ratatui-core 0.1.0 currently requires lru ^0.16.2, so patched lru >=0.18.2 is incompatible.
-# Remove this ignore once the ansi-to-tui/ratatui-core dependency path accepts lru >=0.18.2.
+# Remove this ignore once both ratatui/ansi-to-tui paths resolve to a ratatui-core that accepts
+# lru >=0.18.2.
 ignore = ["RUSTSEC-2026-0253"]
