@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.1] - 2026-03-18
 
-### Documentation
+### Changed
 
 - Updated the README and agent skill documentation for restart policies, file
   watching, and reverse-proxy workflows.
@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > built from that tag report 0.6.0. Version 0.6.1 was not published to
 > crates.io.
 
-## [0.6.0] - 2026-03-17
+## [0.6.0] - 2026-03-18
 
 ### Added
 
@@ -317,17 +317,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `restart` preserves original working directory and environment variables.
 - `down` command now shuts down the daemon.
 
+## [0.1.2] - 2026-03-16
+
+### Fixed
+
+- `restart` now preserves the process working directory and environment.
+- `down` now shuts down the daemon after stopping the configured processes.
+
+### Added
+
+- GitHub Actions CI for checks, tests on Linux and macOS, Clippy, and rustfmt.
+
 ## [0.1.1] - 2026-03-16
 
 ### Fixed
 
 - `stop_all` deregisters processes and honors the `session` field in config
   files.
-
-### Added
-
-- GitHub Actions CI workflow.
-- MIT license and crates.io metadata.
 
 ## [0.1.0] - 2026-03-15
 
@@ -357,6 +363,7 @@ Initial release.
 - XDG-compliant path resolution for state directories.
 - CLI `--help` with workflow examples, daemon model, exit codes, and config
   format documentation.
+- MIT license and crates.io package metadata.
 
 [Unreleased]: https://github.com/jkhoffman/agent-procs/compare/v0.6.2...HEAD
 [0.6.2]: https://github.com/jkhoffman/agent-procs/compare/v0.6.1...v0.6.2
@@ -365,11 +372,12 @@ Initial release.
 [0.5.1]: https://github.com/jkhoffman/agent-procs/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/jkhoffman/agent-procs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/jkhoffman/agent-procs/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/jkhoffman/agent-procs/compare/v0.3.1...v0.4.0
-[0.3.1]: https://github.com/jkhoffman/agent-procs/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/jkhoffman/agent-procs/compare/v0.2.2...v0.3.0
-[0.2.2]: https://github.com/jkhoffman/agent-procs/compare/v0.2.1...v0.2.2
-[0.2.1]: https://github.com/jkhoffman/agent-procs/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/jkhoffman/agent-procs/compare/v0.1.1...v0.2.0
-[0.1.1]: https://github.com/jkhoffman/agent-procs/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/jkhoffman/agent-procs/releases/tag/v0.1.0
+[0.4.0]: https://github.com/jkhoffman/agent-procs/compare/9953cc2d2edcffa16cabc891726a49394e923df6...951304aaa445629b29590d94433c50aa573b7917
+[0.3.1]: https://github.com/jkhoffman/agent-procs/compare/ec8941a5606c4e53c9e1d0c1f8c51cb81654ec4a...9953cc2d2edcffa16cabc891726a49394e923df6
+[0.3.0]: https://github.com/jkhoffman/agent-procs/compare/f0fb5b22918bd1d2777a1ceb4af726a163d01978...ec8941a5606c4e53c9e1d0c1f8c51cb81654ec4a
+[0.2.2]: https://github.com/jkhoffman/agent-procs/compare/9919b82b1393a02faeb7224eee067159c06cbabe...f0fb5b22918bd1d2777a1ceb4af726a163d01978
+[0.2.1]: https://github.com/jkhoffman/agent-procs/compare/eb8fae88fbf2f5c1de953338c1f191d52d7a24fc...9919b82b1393a02faeb7224eee067159c06cbabe
+[0.2.0]: https://github.com/jkhoffman/agent-procs/compare/03aade2b11ce5202f555afca76d7a6d59647693c...eb8fae88fbf2f5c1de953338c1f191d52d7a24fc
+[0.1.2]: https://github.com/jkhoffman/agent-procs/compare/e8a246efe00fdfd82d3741269c8f0717acb349c2...03aade2b11ce5202f555afca76d7a6d59647693c
+[0.1.1]: https://github.com/jkhoffman/agent-procs/compare/b804d4eff8dc7d62855818bca43bb7ca182a2335...e8a246efe00fdfd82d3741269c8f0717acb349c2
+[0.1.0]: https://github.com/jkhoffman/agent-procs/commit/b804d4eff8dc7d62855818bca43bb7ca182a2335
