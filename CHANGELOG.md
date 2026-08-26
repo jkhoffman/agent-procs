@@ -7,16 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-08-26
+
 ### Fixed
 
 - Restored a warning-free Clippy build on current stable Rust, including a
   regression test for mouse selection boundaries in the TUI process pane.
+- Reworked the stale-session cleanup test to use synthetic stale artifacts
+  instead of orphaning a live session daemon during the test suite.
+- Corrected the checked-in Homebrew formula to use the immutable v0.6.2 source
+  archive and added a functional shell-completion test alongside the version
+  assertion.
 
 ### Changed
 
 - Refreshed locked transitive dependencies: `anyhow` 1.0.102 to 1.0.103,
   `crossbeam-epoch` 0.9.18 to 0.9.20, and the locked `rand` 0.8.5/0.9.2
   versions to 0.8.6/0.9.3.
+- Completed crates.io discovery metadata and replaced the package denylist with
+  a positive allowlist so repository-only demos, architecture assets, and
+  internal evaluation material are not shipped in the crate.
+- Hardened CI and release automation with immutable Action revisions,
+  least-privilege permissions, exact tag/version/main-ancestry checks,
+  serialized tests, ordered validate/build/publish/release jobs, and a
+  published SHA-256 manifest for release binaries.
+- Reworked the README opening around persistent development services for AI
+  coding agents, with explicit Unix-only support and same-user security
+  boundaries, a reproducible crash/recovery demo, an accessible architecture
+  diagram, and a factual alternatives guide.
+- Removed unfinished generated benchmark results that did not support public
+  performance or comparative claims.
 
 ### Security
 
@@ -365,7 +385,8 @@ Initial release.
   format documentation.
 - MIT license and crates.io package metadata.
 
-[Unreleased]: https://github.com/jkhoffman/agent-procs/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/jkhoffman/agent-procs/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/jkhoffman/agent-procs/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/jkhoffman/agent-procs/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/jkhoffman/agent-procs/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jkhoffman/agent-procs/compare/v0.5.1...v0.6.0
