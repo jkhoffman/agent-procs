@@ -1,0 +1,18 @@
+proxy: true
+proxy_port: 49095
+
+processes:
+  api:
+    cmd: python3 toy_service.py serve api
+    cwd: .
+    port: 43111
+    ready: "api: READY"
+    autorestart: on-failure
+    max_restarts: 3
+    restart_delay: 400
+  web:
+    cmd: python3 toy_service.py serve web
+    cwd: .
+    port: 43112
+    ready: "web: READY"
+    depends_on: [api]

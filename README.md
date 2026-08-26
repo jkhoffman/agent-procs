@@ -1,6 +1,25 @@
-# agent-procs
+# AgentProcs
 
-Concurrent process runner for AI agents. Processes run in a background daemon and persist across CLI invocations.
+Keep development services alive, observable, and controllable across separate AI coding-agent tool calls.
+
+Coding agents often start an API, web app, or worker in one shell, then lose track of the process on a later tool call. AgentProcs keeps those services under a per-session daemon so the next call can inspect logs, check status, restart a process, or stop everything cleanly.
+
+AgentProcs is for developers using agentic coding workflows on Linux and macOS (Unix only). It provides same-user process supervision, not sandboxing; managed commands retain your filesystem and network access. See [Architecture and security boundary](#architecture-and-security-boundary) for details.
+
+- A daemon persists across CLI calls, with project and session isolation.
+- Readiness checks and dependency ordering start services in the right sequence.
+- Durable indexed logs and JSON status keep process state available to agents and scripts.
+- Restart policies and file watching recover development services; an optional proxy gives them named localhost URLs.
+
+![Animated terminal demo where dependent API and web services start, the API exits with status 42 and restarts as generation 2, and both services shut down cleanly](docs/assets/agent-procs-demo.gif)
+
+This is a real, reproducible local run. Follow [the demo instructions](docs/demo/README.md) to play or record it yourself.
+
+[![CI](https://github.com/jkhoffman/agent-procs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jkhoffman/agent-procs/actions/workflows/ci.yml) [![Crates.io](https://img.shields.io/crates/v/agent-procs)](https://crates.io/crates/agent-procs) [![docs.rs](https://img.shields.io/docsrs/agent-procs)](https://docs.rs/agent-procs) [![License: MIT](https://img.shields.io/crates/l/agent-procs)](LICENSE) ![Platform: Linux and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-informational)
+
+**Engineering proof:** [Unit tests live alongside the source](https://github.com/jkhoffman/agent-procs/tree/main/src), with [property, integration, and end-to-end tests](https://github.com/jkhoffman/agent-procs/tree/main/tests); current [v0.6.2 release binaries](https://github.com/jkhoffman/agent-procs/releases/tag/v0.6.2) target Linux and macOS on x86_64 and ARM64.
+
+[Quick start](#quick-start) · [Architecture and security](#architecture-and-security-boundary)
 
 ## Install
 
@@ -186,9 +205,36 @@ agent-procs --session projectB run "make serve" --name app
 agent-procs --session projectA status   # only shows projectA's processes
 ```
 
-## Architecture
+## Alternatives
 
-The CLI communicates with a per-session background daemon over a Unix domain socket. The daemon manages process lifecycles, captures stdout/stderr to log files, handles wait conditions, and supervises processes with restart policies and file watchers. The daemon auto-starts on first use and exits when all processes are stopped.
+AgentProcs is intentionally narrow for host-process control in agent-driven development; other tools fit different operating models. Linked tool names and notes point to official documentation.
+
+| Tool | Persistent model / isolation | Readiness, status, and logs | Best fit |
+|------|------------------------------|-----------------------------|----------|
+| AgentProcs | A per-session host daemon persists across CLI calls; sessions separate process groups but do not sandbox them. | Dependency-ordered startup with bounded stdout string or regex readiness waits; after a timeout, startup warns and continues. `status --json`; durable indexed logs; crash policies and native file watching. | Agent-driven Unix development workflows. |
+| [`nohup`](https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html) | Runs one command with hangup signals ignored; control remains with normal shell and PID tools. | Writes to `nohup.out` or redirected output. Readiness, named sessions, reconnectable control, and machine-readable status are not documented as built-in workflows in the reviewed manual. | One command must survive logout, and PID/file control is enough. |
+| [`tmux`](https://github.com/tmux/tmux/wiki/Getting-Started) | Detached, reconnectable terminal sessions with window and pane separation; terminal persistence is not process supervision. | Formatted listings, pane history, and `pipe-pane`; readiness and dependency workflows or JSON status are not documented as built-in workflows in the reviewed docs. | Interactive terminals that must be reattached later. |
+| [`PM2`](https://pm2.keymetrics.io/docs/usage/quick-start/) | A host daemon manages named apps and ecosystem files. | PM2 normally detects Node's listen event; [`--wait-ready`](https://pm2.keymetrics.io/docs/usage/signals-clean-restart/) instead waits for app IPC (`process.send('ready')`). Neither matches stdout. `jlist` JSON; [stored and streamed logs](https://pm2.keymetrics.io/docs/usage/log-management/); restart, watch, boot, and cluster support. | A mature host application manager, especially for long-running or Node.js apps. |
+| [`Docker Compose`](https://docs.docker.com/compose/) | Project-scoped containers, optionally detached, with images, networks, and volumes. | `depends_on` sets order; readiness requires a [`service_healthy` condition and healthcheck](https://docs.docker.com/compose/how-tos/startup-order/). [`ps --format json`](https://docs.docker.com/reference/cli/docker/compose/ps/), aggregated logs, [restart policies](https://docs.docker.com/reference/compose-file/services/#restart), and [Compose Watch](https://docs.docker.com/compose/how-tos/file-watch/). | Container-based stacks where those boundaries and healthchecks are the desired model. |
+| [`Overmind`](https://github.com/DarthSim/overmind) | A tmux-backed Procfile runner with working-directory socket and daemon controls. | Text status plus multiplexed or `echo` output; readiness/dependency gating and durable indexed logs are not documented as built-in workflows in the reviewed README; selected processes can auto-restart. | An existing Procfile with direct tmux attachment. |
+| [`Foreman`](https://ddollar.github.io/foreman/) | Runs a Procfile directly or exports it; the reviewed manual does not document a reconnectable Foreman daemon/status workflow. | Interleaved stdout; readiness and dependencies are not documented as built-ins. Export targets include systemd, runit, supervisord, and launchd; their runtime behavior belongs to the target supervisor. | A lightweight Procfile runner or native-supervisor configuration generator. |
+
+### Use another tool when
+
+- `nohup` fits when one command only needs to survive logout and PID/files are enough.
+- Choose `tmux` when a reconnectable interactive terminal is the main need.
+- PM2 suits apps that need an established manager with Node support, restarts, boot integration, metrics, or clustering.
+- Docker Compose is the better model when the stack should use containers, images, networks, volumes, and healthchecks.
+- Overmind fits a project that already has a Procfile and needs direct tmux attachment.
+- Foreman works for a lightweight Procfile workflow or export to a native supervisor.
+
+## Architecture and security boundary
+
+![AgentProcs architecture showing stateless CLI invocations, the protected Unix socket, persistent per-session daemon, managed process groups, durable logs, and optional localhost proxy](docs/assets/architecture.svg)
+
+Each [Quick start](#quick-start) command is a short-lived CLI client, while a per-session daemon persists across invocations and owns the control plane. CLI requests cross a Unix domain socket whose `0700` parent directory limits access to the current user; the daemon supervises process groups, durable session logs, and the optional [Reverse proxy](#reverse-proxy).
+
+AgentProcs provides process supervision, not sandboxing: managed commands retain the current user's filesystem and network access. Use a container or VM when isolation is required; see [Sessions](#sessions) for operational separation and [SECURITY.md](SECURITY.md) for the complete security model.
 
 ## Exit codes
 

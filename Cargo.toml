@@ -6,6 +6,22 @@ rust-version = "1.88"
 description = "Concurrent process runner for AI agents"
 license = "MIT"
 repository = "https://github.com/jkhoffman/agent-procs"
+homepage = "https://github.com/jkhoffman/agent-procs"
+documentation = "https://docs.rs/agent-procs"
+readme = "README.md"
+keywords = ["agents", "process-manager", "daemon", "cli", "devtools"]
+categories = ["command-line-utilities", "development-tools"]
+include = [
+    "/src/**",
+    "/tests/**",
+    "/benches/**",
+    "/skill/SKILL.md",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]
 
 [[bin]]
 name = "agent-procs"
