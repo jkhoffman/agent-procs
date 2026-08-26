@@ -1,140 +1,133 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-labelledby="diagram-title diagram-desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 1250" width="760" height="1250" role="img" aria-labelledby="diagram-title diagram-desc">
   <title id="diagram-title">AgentProcs architecture and security boundary</title>
-  <desc id="diagram-desc">A coding agent or developer repeatedly starts a stateless CLI. The CLI exchanges control messages with a persistent per-session daemon through a Unix domain socket protected by a parent directory with mode 0700. The daemon starts each command in its own same-user operating-system process group, captures standard output and error to durable session logs and indexes, and can optionally route localhost HTTP traffic through a reverse proxy. AgentProcs supervises processes but does not sandbox them.</desc>
+  <desc id="diagram-desc">A coding agent or developer repeatedly starts a stateless CLI. The CLI exchanges bidirectional control messages with a persistent per-session daemon through a Unix domain socket under /tmp/agent-procs-&lt;uid&gt;/. The parent directory has mode 0700 and the socket mode follows the user's umask. The daemon starts every managed command as a same-user operating-system process group and sends SIGTERM to the entire group. Command output is captured in durable per-session state, logs, and sidecar indexes. An optional reverse proxy accepts localhost HTTP requests and routes them to managed process ports. Solid lines represent control flow; dashed lines represent output or HTTP traffic. AgentProcs supervises processes but does not sandbox them.</desc>
   <defs>
-    <marker id="arrow-control" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L10,5 L0,10 Z" fill="#075985"/>
+    <marker id="arrow-control" markerWidth="14" markerHeight="14" refX="13" refY="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L14,7 L0,14 Z" fill="#075985"/>
     </marker>
-    <marker id="arrow-data" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L10,5 L0,10 Z" fill="#475569"/>
+    <marker id="arrow-data" markerWidth="14" markerHeight="14" refX="13" refY="7" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L14,7 L0,14 Z" fill="#475569"/>
     </marker>
     <style>
       text { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
-      .title { font-size: 28px; font-weight: 700; }
-      .subtitle { font-size: 16px; fill: #475569; }
-      .heading { font-size: 19px; font-weight: 700; }
-      .body { font-size: 16px; }
-      .small { font-size: 16px; fill: #475569; }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; }
-      .card { fill: #ffffff; stroke: #64748b; stroke-width: 2; }
-      .actor { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; }
-      .daemon { fill: #ecfdf5; stroke: #047857; stroke-width: 2.5; }
-      .process { fill: #f0fdfa; stroke: #0f766e; stroke-width: 2; }
-      .storage { fill: #fff7ed; stroke: #c2410c; stroke-width: 2; }
-      .optional { fill: #faf5ff; stroke: #7e22ce; stroke-width: 2; }
-      .boundary { fill: #fffbeb; stroke: #a16207; stroke-width: 2.5; stroke-dasharray: 9 6; }
-      .warning { fill: #fff1f2; stroke: #be123c; stroke-width: 2.5; }
-      .control { fill: none; stroke: #075985; stroke-width: 3; marker-end: url(#arrow-control); }
-      .control-bi { fill: none; stroke: #075985; stroke-width: 3; marker-start: url(#arrow-control); marker-end: url(#arrow-control); }
-      .data { fill: none; stroke: #475569; stroke-width: 3; stroke-dasharray: 7 6; marker-end: url(#arrow-data); }
-      .divider { stroke: #cbd5e1; stroke-width: 1.5; }
+      .title { font-size: 36px; font-weight: 750; }
+      .subtitle { font-size: 22px; fill: #475569; }
+      .heading { font-size: 28px; font-weight: 700; }
+      .body { font-size: 24px; }
+      .small { font-size: 21px; fill: #475569; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 21px; }
+      .card { fill: #ffffff; stroke: #64748b; stroke-width: 2.5; }
+      .actor { fill: #eff6ff; stroke: #2563eb; stroke-width: 2.5; }
+      .daemon { fill: #ecfdf5; stroke: #047857; stroke-width: 3; }
+      .process { fill: #f0fdfa; stroke: #0f766e; stroke-width: 2.5; }
+      .storage { fill: #fff7ed; stroke: #c2410c; stroke-width: 2.5; }
+      .optional { fill: #faf5ff; stroke: #7e22ce; stroke-width: 2.5; }
+      .boundary { fill: #fffbeb; stroke: #a16207; stroke-width: 3; stroke-dasharray: 11 8; }
+      .warning { fill: #fff1f2; stroke: #be123c; stroke-width: 3; }
+      .control { fill: none; stroke: #075985; stroke-width: 4; marker-end: url(#arrow-control); }
+      .control-bi { fill: none; stroke: #075985; stroke-width: 4; marker-start: url(#arrow-control); marker-end: url(#arrow-control); }
+      .data { fill: none; stroke: #475569; stroke-width: 4; stroke-dasharray: 9 7; marker-end: url(#arrow-data); }
+      .divider { stroke: #cbd5e1; stroke-width: 2; }
     </style>
   </defs>
 
-  <rect width="1200" height="700" fill="#f8fafc"/>
+  <rect width="760" height="1250" fill="#f8fafc"/>
 
   <g role="group" aria-label="Diagram heading">
-    <text class="title" x="40" y="48">AgentProcs architecture</text>
-    <text class="subtitle" x="40" y="76">Persistent process supervision behind a stateless command-line control plane</text>
+    <text class="title" x="30" y="48">AgentProcs architecture</text>
+    <text class="subtitle" x="30" y="80">Persistent supervision · stateless control plane</text>
   </g>
 
   <g role="group" aria-label="Coding agent or developer">
-    <rect class="actor" x="40" y="145" width="205" height="142" rx="14"/>
-    <circle cx="75" cy="183" r="17" fill="#2563eb"/>
-    <path d="M67 182l6 6 11-13" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="heading" x="103" y="181">Coding agent</text>
-    <text class="heading" x="103" y="205">or developer</text>
-    <line class="divider" x1="60" y1="221" x2="225" y2="221"/>
-    <text class="body" x="60" y="250">Invokes commands</text>
-    <text class="small" x="60" y="274">again and again</text>
+    <rect class="actor" x="30" y="110" width="305" height="135" rx="16"/>
+    <circle cx="68" cy="151" r="18" fill="#2563eb"/>
+    <path d="M59 150l7 7 12-15" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="heading" x="98" y="151">Coding agent</text>
+    <text class="heading" x="98" y="184">or developer</text>
+    <line class="divider" x1="52" y1="201" x2="313" y2="201"/>
+    <text class="small" x="52" y="229">invokes commands repeatedly</text>
   </g>
 
-  <g role="group" aria-label="Stateless CLI invocations">
-    <rect class="card" x="300" y="126" width="220" height="180" rx="14"/>
-    <rect x="320" y="149" width="180" height="38" rx="7" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.5"/>
-    <text class="mono" x="335" y="174">CLI invocation 1</text>
-    <rect x="320" y="196" width="180" height="38" rx="7" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.5"/>
-    <text class="mono" x="335" y="221">CLI invocation 2</text>
-    <text class="heading" x="320" y="266">Stateless CLI</text>
-    <text class="small" x="320" y="290">short-lived clients</text>
+  <g role="group" aria-label="Repeated stateless CLI invocations">
+    <rect class="card" x="405" y="110" width="325" height="135" rx="16"/>
+    <text class="heading" x="429" y="146">Stateless CLI</text>
+    <rect x="429" y="164" width="130" height="48" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="2"/>
+    <text class="mono" x="447" y="196">call 1</text>
+    <rect x="575" y="164" width="130" height="48" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="2"/>
+    <text class="mono" x="593" y="196">call 2…</text>
+    <text class="small" x="429" y="233">short-lived clients</text>
   </g>
 
-  <path class="control" d="M245 216 H292"/>
-  <text class="small" x="250" y="202">invoke</text>
+  <path class="control" d="M335 178 H397"/>
+  <text class="small" x="342" y="163">invoke</text>
+
+  <path class="control-bi" d="M568 245 V289"/>
+  <text class="small" x="584" y="275">control</text>
 
   <g role="group" aria-label="Unix socket access-control boundary">
-    <rect class="boundary" x="565" y="105" width="255" height="222" rx="16"/>
-    <text class="heading" x="587" y="137">Access-control boundary</text>
-    <text class="mono" x="587" y="164">/tmp/agent-procs-&lt;uid&gt;/</text>
-    <rect x="587" y="181" width="211" height="48" rx="8" fill="#fef3c7" stroke="#a16207" stroke-width="1.5"/>
-    <text class="heading" x="604" y="212">parent directory 0700</text>
-    <rect class="card" x="587" y="246" width="211" height="57" rx="8"/>
-    <text class="mono" x="604" y="271">&lt;session&gt;.sock</text>
-    <text class="small" x="604" y="294">socket mode follows umask</text>
+    <rect class="boundary" x="30" y="300" width="700" height="160" rx="18"/>
+    <text class="heading" x="54" y="337">Unix socket boundary</text>
+    <text class="mono" x="54" y="371">/tmp/agent-procs-&lt;uid&gt;/</text>
+    <rect x="54" y="390" width="294" height="48" rx="9" fill="#fef3c7" stroke="#a16207" stroke-width="2"/>
+    <text class="body" x="72" y="422">parent directory 0700</text>
+    <rect class="card" x="370" y="390" width="336" height="48" rx="9"/>
+    <text class="small" x="388" y="422">socket mode follows umask</text>
   </g>
 
-  <path class="control-bi" d="M520 275 H557"/>
-  <text class="small" x="524" y="261">control</text>
+  <path class="control-bi" d="M380 460 V499"/>
+  <text class="small" x="396" y="490">bidirectional control</text>
 
   <g role="group" aria-label="Persistent per-session daemon">
-    <rect class="daemon" x="865" y="126" width="295" height="180" rx="14"/>
-    <circle cx="899" cy="166" r="15" fill="#047857"/>
-    <path d="M899 157v9l7 5" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
-    <text class="heading" x="925" y="165">Per-session daemon</text>
-    <text class="body" x="887" y="205">Persists across CLI invocations</text>
-    <text class="body" x="887" y="234">Owns lifecycle and wait/restart</text>
-    <text class="body" x="887" y="263">state for managed commands</text>
-    <text class="small" x="887" y="289">same current user</text>
+    <rect class="daemon" x="80" y="510" width="600" height="135" rx="16"/>
+    <circle cx="120" cy="552" r="18" fill="#047857"/>
+    <path d="M120 541v12l9 6" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+    <text class="heading" x="154" y="553">Persistent per-session daemon</text>
+    <text class="body" x="104" y="593">Survives CLI calls · owns command lifecycle</text>
+    <text class="small" x="104" y="625">runs as the same current user</text>
   </g>
 
-  <path class="control-bi" d="M820 275 H857"/>
+  <path class="control" d="M380 645 V689"/>
+  <text class="small" x="396" y="677">launch · stop · restart</text>
 
-  <g role="group" aria-label="Managed operating-system process groups">
-    <rect class="process" x="475" y="380" width="325" height="153" rx="14"/>
-    <text class="heading" x="497" y="414">Managed commands</text>
-    <text class="body" x="497" y="444">One OS process group per command</text>
-    <rect x="497" y="462" width="281" height="46" rx="8" fill="#ccfbf1" stroke="#0f766e" stroke-width="1.5"/>
-    <text class="mono" x="515" y="490">SIGTERM → entire group</text>
-    <text class="small" x="497" y="524">same UID / GID as the daemon</text>
+  <g role="group" aria-label="Managed same-user operating-system process groups">
+    <rect class="process" x="80" y="700" width="600" height="140" rx="16"/>
+    <text class="heading" x="104" y="739">Managed commands</text>
+    <text class="body" x="104" y="778">One OS process group per command</text>
+    <rect x="104" y="794" width="552" height="28" rx="8" fill="#ccfbf1"/>
+    <text class="small" x="126" y="817">same user · group SIGTERM → all children</text>
   </g>
 
-  <path class="control" d="M940 306 V350 H768 V372"/>
-  <text class="small" x="785" y="344">launch · stop · restart</text>
+  <path class="data" d="M250 840 V870 Q250 884 236 884 H200 V891"/>
+  <text class="small" x="72" y="878">captured output</text>
 
-  <g role="group" aria-label="Durable session state and log files">
-    <rect class="storage" x="40" y="380" width="365" height="153" rx="14"/>
-    <text class="heading" x="62" y="414">Durable per-session state</text>
-    <text class="mono" x="62" y="444">$XDG_STATE_HOME/agent-procs/</text>
-    <text class="mono" x="62" y="468">sessions/&lt;session&gt;/</text>
-    <text class="body" x="62" y="499">stdout · stderr · sidecar indexes</text>
-    <text class="small" x="62" y="524">plus state.json and daemon.log</text>
+  <path class="data" d="M560 891 V884 H524 Q510 884 510 870 V840"/>
+  <text class="small" x="526" y="878">HTTP requests</text>
+
+  <g role="group" aria-label="Durable session state logs and indexes">
+    <rect class="storage" x="30" y="900" width="340" height="140" rx="16"/>
+    <text class="heading" x="54" y="939">Durable data</text>
+    <text class="body" x="54" y="978">stdout · stderr · state</text>
+    <text class="body" x="54" y="1011">daemon logs · indexes</text>
   </g>
-
-  <path class="data" d="M475 456 H413"/>
-  <text class="small" x="416" y="443">output</text>
 
   <g role="group" aria-label="Optional localhost reverse proxy">
-    <rect class="optional" x="870" y="380" width="290" height="153" rx="14"/>
-    <text class="heading" x="892" y="414">Optional reverse proxy</text>
-    <text class="mono" x="892" y="446">127.0.0.1:&lt;port&gt;</text>
-    <text class="body" x="892" y="478">Routes *.localhost by name</text>
-    <text class="small" x="892" y="507">to managed process ports</text>
-    <text class="small" x="892" y="529">no non-loopback bind</text>
-  </g>
-
-  <path class="data" d="M870 456 H808"/>
-  <text class="small" x="817" y="443">HTTP</text>
-
-  <g role="group" aria-label="Security boundary warning">
-    <rect class="warning" x="40" y="574" width="1120" height="82" rx="14"/>
-    <text class="heading" x="65" y="608" fill="#9f1239">Process supervision, not sandboxing</text>
-    <text class="body" x="65" y="635">Managed processes retain the current user’s filesystem and network access. Use a container or VM when isolation is required.</text>
+    <rect class="optional" x="390" y="900" width="340" height="140" rx="16"/>
+    <text class="heading" x="414" y="939">Optional proxy</text>
+    <text class="mono" x="414" y="978">127.0.0.1:&lt;port&gt;</text>
+    <text class="body" x="414" y="1011">routes to process ports</text>
   </g>
 
   <g role="group" aria-label="Flow legend">
-    <line x1="455" y1="682" x2="495" y2="682" stroke="#075985" stroke-width="3"/>
-    <text class="small" x="504" y="688">control flow</text>
-    <line x1="635" y1="682" x2="675" y2="682" stroke="#475569" stroke-width="3" stroke-dasharray="7 6"/>
-    <text class="small" x="684" y="688">process / log data</text>
+    <line x1="108" y1="1075" x2="163" y2="1075" stroke="#075985" stroke-width="4"/>
+    <text class="small" x="176" y="1082">solid = control</text>
+    <line x1="408" y1="1075" x2="463" y2="1075" stroke="#475569" stroke-width="4" stroke-dasharray="9 7"/>
+    <text class="small" x="476" y="1082">dashed = data / traffic</text>
+  </g>
+
+  <g role="group" aria-label="Security boundary warning">
+    <rect class="warning" x="30" y="1110" width="700" height="110" rx="16"/>
+    <text class="heading" x="54" y="1149" fill="#9f1239">Supervision, not sandboxing</text>
+    <text class="small" x="54" y="1182">Processes keep the current user’s filesystem access.</text>
+    <text class="small" x="54" y="1209">They keep network access too. Isolate with a container or VM.</text>
   </g>
 </svg>
