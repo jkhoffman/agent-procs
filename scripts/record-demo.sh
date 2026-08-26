@@ -93,6 +93,42 @@ stop_without_ownership() {
   if [[ -S "$SOCKET" ]] && ap status --json >"$probe" 2>/dev/null; then
     ap stop api >/dev/null 2>&1 || true
     ap stop web >/dev/null 2>&1 || true
+    local attempt state
+    for attempt in {1..200}; do
+      if ! ap status --json >"$probe" 2>/dev/null; then break; fi
+      state=$(python3 - "$probe" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    processes = json.load(stream)
+expected = {"api": "python3 toy_service.py serve api", "web": "python3 toy_service.py serve web"}
+names = {item.get("name") for item in processes}
+if not processes:
+    print("retirable")
+elif names != set(expected) or any(item.get("command") != expected.get(item.get("name")) for item in processes):
+    print("foreign")
+elif all(item.get("state") in {"exited", "failed"} for item in processes):
+    print("retirable")
+else:
+    print("stopping")
+PY
+      )
+      [[ $state != foreign ]] || break
+      if [[ $state == retirable ]]; then
+        ap down >/dev/null 2>&1 || true
+        local retire_attempt
+        for retire_attempt in {1..50}; do
+          if [[ ! -e "$SOCKET" && ! -L "$SOCKET" && ! -e "$PID_FILE" && ! -L "$PID_FILE" ]]; then
+            break
+          fi
+          if [[ $retire_attempt -eq 10 || $retire_attempt -eq 20 ]]; then
+            ap down >/dev/null 2>&1 || true
+          fi
+          sleep 0.1
+        done
+        break
+      fi
+      sleep 0.1
+    done
   fi
   if [[ -e "$SOCKET" || -L "$SOCKET" || -e "$PID_FILE" || -L "$PID_FILE" ]]; then
     printf 'warning: session was not validated; preserved artifacts for %s in %s\n' "$SESSION" "$SOCKET_BASE" >&2
