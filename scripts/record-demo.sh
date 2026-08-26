@@ -6,8 +6,6 @@ ROOT=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 BINARY="$ROOT/target/release/agent-procs"
 CONFIG="docs/demo/agent-procs.yaml"
 DEMO_DIR="$ROOT/docs/demo"
-RUNTIME="$DEMO_DIR/.demo-runtime"
-STATE_HOME="$DEMO_DIR/.agent-procs-state"
 TOOLS_BASE=${AGENT_PROCS_DEMO_TOOLS:-${TMPDIR:-/tmp}/agent-procs-demo-tools}
 ASCIINEMA_VERSION=3.0.0
 AGG_VERSION=1.5.0
@@ -15,20 +13,25 @@ AGG_REVISION=5592b9790ba7c6d5ffa232176e29a1d3cadf8fe2
 TOOLS_ROOT="$TOOLS_BASE/asciinema-$ASCIINEMA_VERSION-agg-$AGG_REVISION"
 CAST="$DEMO_DIR/agent-procs-demo.cast"
 GIF="$ROOT/docs/assets/agent-procs-demo.gif"
-SESSION=agent-procs-portfolio-demo
+SESSION="agent-procs-demo-$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
 SOCKET_BASE="/tmp/agent-procs-$(id -u)"
 SOCKET="$SOCKET_BASE/$SESSION.sock"
 PID_FILE="$SOCKET_BASE/$SESSION.pid"
-OWNER_MARKER="$SOCKET_BASE/$SESSION.demo-owner"
-OWNER_TOKEN="pid=$$;repo=$ROOT;session=$SESSION"
 PORTS=(43111 43112 49095)
+RUN_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/agent-procs-demo.XXXXXX")
+chmod 700 "$RUN_ROOT"
+RUNTIME="$RUN_ROOT/runtime"
+STATE_HOME="$RUN_ROOT/state"
+STATUS_BEFORE_DOWN="$RUN_ROOT/status-before-down.json"
+export AGENT_PROCS_DEMO_RUNTIME="$RUNTIME"
 export XDG_STATE_HOME="$STATE_HOME"
 export TERM=xterm-256color
 export NO_COLOR=1
+mkdir -m 700 "$RUNTIME" "$STATE_HOME"
 
 CLEANED=0
-OWNED=0
-MANAGE_SESSION=0
+OWN_SESSION=0
+DOWN_DONE=0
 
 pause() {
   local seconds=$1
@@ -42,229 +45,193 @@ prompt() {
 }
 
 ap() {
-  "$BINARY" "$@"
+  "$BINARY" --session "$SESSION" "$@"
 }
 
-owner_matches() {
-  [[ $OWNED -eq 1 && -f "$OWNER_MARKER" && ! -L "$OWNER_MARKER" ]] || return 1
-  python3 - "$OWNER_MARKER" "$OWNER_TOKEN" <<'PY'
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-expected = (sys.argv[2] + "\n").encode()
-try:
-    actual = path.read_bytes()
-except OSError:
-    raise SystemExit(1)
-raise SystemExit(0 if actual == expected else 1)
+assert_ports_free() {
+  python3 - "${PORTS[@]}" <<'PY'
+import socket, sys
+for value in sys.argv[1:]:
+    with socket.socket() as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", int(value)))
 PY
 }
 
-remove_owned_artifacts() {
-  owner_matches || return 1
-  rm -rf -- "$RUNTIME" "$STATE_HOME" || return 1
-  owner_matches || return 1
-  rm -f -- "$OWNER_MARKER" || return 1
-  OWNED=0
+preflight() {
+  mkdir -p -- "$SOCKET_BASE"
+  [[ -d "$SOCKET_BASE" && ! -L "$SOCKET_BASE" && -O "$SOCKET_BASE" ]] || {
+    printf 'error: unsafe socket directory: %s\n' "$SOCKET_BASE" >&2
+    return 1
+  }
+  chmod 700 "$SOCKET_BASE"
+  [[ ! -e "$SOCKET" && ! -L "$SOCKET" && ! -e "$PID_FILE" && ! -L "$PID_FILE" ]] || {
+    printf 'error: random session unexpectedly already exists: %s\n' "$SESSION" >&2
+    return 1
+  }
+  assert_ports_free
 }
 
-remove_owner_marker() {
-  owner_matches || return 1
-  rm -f -- "$OWNER_MARKER" || return 1
-  OWNED=0
+verify_expected_status() {
+  python3 - "$1" <<'PY'
+import json, os, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    processes = json.load(stream)
+expected = {"api": "python3 toy_service.py serve api", "web": "python3 toy_service.py serve web"}
+if len(processes) != 2 or {item.get("name") for item in processes} != set(expected):
+    raise SystemExit("session must contain exactly api and web")
+for item in processes:
+    name = item["name"]
+    if item.get("command") != expected[name] or item.get("state") != "running":
+        raise SystemExit(f"unexpected command or state for {name}")
+    os.kill(int(item["pid"]), 0)
+PY
+}
+
+stop_without_ownership() {
+  local probe="$RUN_ROOT/status-unowned.json"
+  if [[ -S "$SOCKET" ]] && ap status --json >"$probe" 2>/dev/null; then
+    ap stop api >/dev/null 2>&1 || true
+    ap stop web >/dev/null 2>&1 || true
+  fi
+  if [[ -e "$SOCKET" || -L "$SOCKET" || -e "$PID_FILE" || -L "$PID_FILE" ]]; then
+    printf 'warning: session was not validated; preserved artifacts for %s in %s\n' "$SESSION" "$SOCKET_BASE" >&2
+  fi
+}
+
+safe_down() {
+  [[ $OWN_SESSION -eq 1 ]] || return 1
+  ap down
+  local attempt
+  for attempt in {1..50}; do
+    if [[ ! -e "$SOCKET" && ! -L "$SOCKET" && ! -e "$PID_FILE" && ! -L "$PID_FILE" ]]; then
+      DOWN_DONE=1
+      return 0
+    fi
+    if [[ $attempt -eq 10 || $attempt -eq 20 ]]; then
+      ap down >/dev/null 2>&1 || true
+    fi
+    sleep 0.1
+  done
+  printf 'error: session did not retire its socket and PID file\n' >&2
+  return 1
+}
+
+remove_run_root() {
+  # This private high-entropy mktemp boundary prevents accidental collisions.
+  # Malicious same-user replacement races and root are explicitly out of scope.
+  python3 - "$RUN_ROOT" "${TMPDIR:-/tmp}" <<'PY'
+import os, shutil, stat, sys
+path, temp = sys.argv[1:]
+entry = os.lstat(path)
+resolved = os.path.realpath(path)
+parent = os.path.realpath(temp)
+if not stat.S_ISDIR(entry.st_mode) or stat.S_ISLNK(entry.st_mode):
+    raise SystemExit("refusing to remove non-directory run root")
+if entry.st_uid != os.getuid() or stat.S_IMODE(entry.st_mode) != 0o700:
+    raise SystemExit("refusing run root with unexpected owner or mode")
+if os.path.dirname(resolved) != parent or not os.path.basename(resolved).startswith("agent-procs-demo."):
+    raise SystemExit("refusing run root outside expected temporary namespace")
+shutil.rmtree(resolved)
+PY
 }
 
 cleanup() {
-  local _status=$?
-  if [[ $CLEANED -eq 1 ]]; then
-    return "$_status"
-  fi
+  local status=$?
+  [[ $CLEANED -eq 0 ]] || return "$status"
   CLEANED=1
-
-  if owner_matches; then
-    if [[ $MANAGE_SESSION -eq 1 ]]; then
-      "$BINARY" --session "$SESSION" down >/dev/null 2>&1 || true
-      local attempt
-      for attempt in {1..50}; do
-        if [[ ! -e "$SOCKET" && ! -e "$PID_FILE" ]] && assert_ports_free 2>/dev/null; then
-          break
-        fi
-        if (( attempt % 10 == 0 )) && owner_matches; then
-          "$BINARY" --session "$SESSION" down >/dev/null 2>&1 || true
-        fi
-        sleep 0.1
-      done
-      if [[ ! -e "$SOCKET" && ! -e "$PID_FILE" ]] && assert_ports_free 2>/dev/null; then
-        remove_owned_artifacts || true
-      fi
-    else
-      # Acquisition lost a race before this script was allowed to manage the
-      # session. Relinquish only our marker; preserve every collision path.
-      remove_owner_marker || true
-    fi
+  local cleanup_failed=0
+  if [[ $DOWN_DONE -eq 0 && $OWN_SESSION -eq 1 ]]; then
+    safe_down >/dev/null 2>&1 || cleanup_failed=1
+  elif [[ $DOWN_DONE -eq 0 ]]; then
+    stop_without_ownership || cleanup_failed=1
   fi
-  return "$_status"
+  remove_run_root || cleanup_failed=1
+  if [[ $status -eq 0 && $cleanup_failed -ne 0 ]]; then status=1; fi
+  return "$status"
 }
 
-on_int() {
-  exit 130
-}
-
-on_term() {
-  exit 143
-}
-
+on_int() { exit 130; }
+on_term() { exit 143; }
 trap cleanup EXIT
 trap on_int INT
 trap on_term TERM
 
-assert_ports_free() {
-  python3 - "${PORTS[@]}" <<'PY'
-import socket
-import sys
-
-for value in sys.argv[1:]:
-    port = int(value)
-    with socket.socket() as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("127.0.0.1", port))
-PY
-}
-
-refuse_existing_session() {
-  local path
-  for path in "$SOCKET" "$PID_FILE" "$OWNER_MARKER" "$RUNTIME" "$STATE_HOME"; do
-    if [[ -e "$path" || -L "$path" ]]; then
-      printf 'error: refusing to use session %s: pre-existing path %s\n' "$SESSION" "$path" >&2
-      printf 'Remove it manually only after confirming no foreign or interrupted session owns it.\n' >&2
-      return 1
-    fi
-  done
-}
-
-acquire_ownership() {
-  refuse_existing_session
-  mkdir -p -- "$SOCKET_BASE"
-  if [[ ! -d "$SOCKET_BASE" || -L "$SOCKET_BASE" || ! -O "$SOCKET_BASE" ]]; then
-    printf 'error: unsafe socket directory: %s\n' "$SOCKET_BASE" >&2
-    return 1
-  fi
-  chmod 700 "$SOCKET_BASE"
-
-  if ! (set -o noclobber; printf '%s\n' "$OWNER_TOKEN" >"$OWNER_MARKER") 2>/dev/null; then
-    printf 'error: refusing to use session %s: ownership marker already exists\n' "$SESSION" >&2
-    return 1
-  fi
-  OWNED=1
-
-  # Close the pre-check/acquire race. Never call `down` if another session
-  # published artifacts before this process established ownership.
-  local path
-  for path in "$SOCKET" "$PID_FILE" "$RUNTIME" "$STATE_HOME"; do
-    if [[ -e "$path" || -L "$path" ]]; then
-      printf 'error: session collision detected after ownership acquisition: %s\n' "$path" >&2
-      return 1
-    fi
-  done
-}
-
 verify_cleanup() {
   local attempt
   for attempt in {1..50}; do
-    if [[ ! -e "$SOCKET" && ! -e "$PID_FILE" ]] && assert_ports_free 2>/dev/null; then
-      break
-    fi
-    if (( attempt % 10 == 0 )) && owner_matches; then
-      "$BINARY" --session "$SESSION" down >/dev/null 2>&1 || true
-    fi
+    if [[ ! -e "$SOCKET" && ! -e "$PID_FILE" ]] && assert_ports_free 2>/dev/null; then break; fi
     sleep 0.1
   done
-
-  [[ ! -e "$SOCKET" ]]
-  [[ ! -e "$PID_FILE" ]]
+  [[ ! -e "$SOCKET" && ! -L "$SOCKET" && ! -e "$PID_FILE" && ! -L "$PID_FILE" ]]
   assert_ports_free
-
-  python3 - "$RUNTIME/status-before-down.json" <<'PY'
-import json
-import os
-import sys
-
-status_path = sys.argv[1]
-with open(status_path, encoding="utf-8") as stream:
+  python3 - "$STATUS_BEFORE_DOWN" <<'PY'
+import json, os, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
     processes = json.load(stream)
 for process in processes:
-    pid = int(process["pid"])
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        continue
-    raise SystemExit(f"process still alive: {pid}")
+    try: os.kill(int(process["pid"]), 0)
+    except ProcessLookupError: continue
+    raise SystemExit(f"process still alive: {process['pid']}")
 PY
-
-  remove_owned_artifacts
-  [[ ! -e "$RUNTIME" && ! -e "$STATE_HOME" && ! -e "$OWNER_MARKER" ]]
 }
 
 play_demo() {
   cd "$ROOT"
-  acquire_ownership
-  assert_ports_free
-  MANAGE_SESSION=1
-  mkdir -p "$RUNTIME"
-
+  preflight
   printf '\033[2J\033[H'
   printf '\033[1;37mAgentProcs: resilient local agent workflow\033[0m\n'
   printf '\033[0;37mTwo dependent services · stable URLs · automatic crash recovery\033[0m\n'
+  printf '\033[0;37mIsolated session: %s\033[0m\n' "$SESSION"
+  printf '\033[0;37m$ DEMO_SESSION=%s\033[0m\n' "$SESSION"
   pause 3
 
-  prompt 'agent-procs up --config docs/demo/agent-procs.yaml'
+  prompt "agent-procs --session \"\$DEMO_SESSION\" up --config docs/demo/agent-procs.yaml"
   ap up --config "$CONFIG"
+  if ! ap status --json >"$RUN_ROOT/status-after-up.json" || \
+      ! verify_expected_status "$RUN_ROOT/status-after-up.json"; then
+    printf 'error: startup did not produce exactly the expected running api/web processes\n' >&2
+    return 1
+  fi
+  OWN_SESSION=1
   pause 4
 
-  prompt 'agent-procs --session agent-procs-portfolio-demo status'
-  ap --session "$SESSION" status
+  prompt "agent-procs --session \"\$DEMO_SESSION\" status"
+  ap status
   pause 4
-
   prompt 'python3 docs/demo/toy_service.py request web'
   python3 docs/demo/toy_service.py request web
   pause 4
-
-  prompt 'agent-procs --session agent-procs-portfolio-demo logs --all --tail 8'
-  ap --session "$SESSION" logs --all --tail 8
+  prompt "agent-procs --session \"\$DEMO_SESSION\" logs --all --tail 8"
+  ap logs --all --tail 8
   pause 3
 
   printf '\n\033[1;37mNow trigger a controlled API failure...\033[0m\n'
   prompt 'python3 docs/demo/toy_service.py crash'
   python3 docs/demo/toy_service.py crash
   pause 2
-
-  prompt 'agent-procs --session agent-procs-portfolio-demo wait api --until "[agent-procs] Restarted" --timeout 10'
-  ap --session "$SESSION" wait api --until '[agent-procs] Restarted' --timeout 10
+  prompt "agent-procs --session \"\$DEMO_SESSION\" wait api --until \"[agent-procs] Restarted\" --timeout 10"
+  ap wait api --until '[agent-procs] Restarted' --timeout 10
   pause 3
-
-  prompt 'agent-procs --session agent-procs-portfolio-demo logs api --tail 8'
-  ap --session "$SESSION" logs api --tail 8
+  prompt "agent-procs --session \"\$DEMO_SESSION\" logs api --tail 8"
+  ap logs api --tail 8
   pause 5
-
-  prompt 'agent-procs --session agent-procs-portfolio-demo status'
-  ap --session "$SESSION" status
+  prompt "agent-procs --session \"\$DEMO_SESSION\" status"
+  ap status
   pause 4
-
   prompt 'python3 docs/demo/toy_service.py request api'
   python3 docs/demo/toy_service.py request api
   pause 4
 
-  ap --session "$SESSION" status --json >"$RUNTIME/status-before-down.json"
-  prompt 'agent-procs --session agent-procs-portfolio-demo down'
-  ap --session "$SESSION" down
+  ap status --json >"$STATUS_BEFORE_DOWN"
+  verify_expected_status "$STATUS_BEFORE_DOWN"
+  prompt "agent-procs --session \"\$DEMO_SESSION\" down"
+  safe_down
   pause 3
-
   verify_cleanup
-  MANAGE_SESSION=0
-  CLEANED=1
   printf '\n\033[1;32m✓ clean shutdown verified\033[0m\n'
-  printf '  no demo processes · no listeners · no socket, state, runtime, or owner files\n'
+  printf '  no demo processes · no listeners · no socket or PID files\n'
+  printf '  private runtime/state namespace removed on exit\n'
   pause 6
 }
 
@@ -272,18 +239,12 @@ agg_provenance_ok() {
   [[ -x "$TOOLS_ROOT/bin/agg" && -f "$TOOLS_ROOT/.crates2.json" ]] || return 1
   [[ $("$TOOLS_ROOT/bin/agg" --version) == "agg $AGG_VERSION" ]] || return 1
   python3 - "$TOOLS_ROOT/.crates2.json" "$AGG_VERSION" "$AGG_REVISION" <<'PY'
-import json
-import sys
-
+import json, sys
 metadata_path, version, revision = sys.argv[1:]
 with open(metadata_path, encoding="utf-8") as stream:
     installs = json.load(stream).get("installs", {})
-expected = (
-    f"agg {version} (git+https://github.com/asciinema/agg"
-    f"?rev={revision}#{revision})"
-)
-valid = "agg" in installs.get(expected, {}).get("bins", [])
-raise SystemExit(0 if valid else 1)
+expected = f"agg {version} (git+https://github.com/asciinema/agg?rev={revision}#{revision})"
+raise SystemExit(0 if "agg" in installs.get(expected, {}).get("bins", []) else 1)
 PY
 }
 
@@ -296,10 +257,14 @@ install_tools() {
     rm -f -- "$TOOLS_ROOT/bin/agg"
     cargo install --locked --root "$TOOLS_ROOT" --git https://github.com/asciinema/agg --rev "$AGG_REVISION" agg
   fi
-  agg_provenance_ok || {
-    printf 'error: cached agg does not prove Git revision %s\n' "$AGG_REVISION" >&2
-    return 1
-  }
+  agg_provenance_ok || { printf 'error: cached agg does not prove Git revision %s\n' "$AGG_REVISION" >&2; return 1; }
+}
+
+render_demo() {
+  install_tools
+  mkdir -p "$(dirname -- "$GIF")"
+  "$TOOLS_ROOT/bin/agg" --theme github-dark --font-family 'DejaVu Sans Mono' --font-size 16 \
+    --line-height 1.25 --fps-cap 12 --idle-time-limit 6 --last-frame-duration 3 "$CAST" "$GIF"
 }
 
 record_demo() {
@@ -309,19 +274,9 @@ record_demo() {
   mkdir -p "$(dirname -- "$GIF")"
   DEMO_DELAY=1 "$TOOLS_ROOT/bin/asciinema" record \
     --quiet --headless --return --overwrite --output-format asciicast-v2 \
-    --window-size 100x30 --idle-time-limit 6 \
-    --title 'AgentProcs resilient agent workflow' \
+    --window-size 100x30 --idle-time-limit 6 --title 'AgentProcs resilient agent workflow' \
     --command "bash scripts/record-demo.sh --play" "$CAST"
   render_demo
-}
-
-render_demo() {
-  install_tools
-  mkdir -p "$(dirname -- "$GIF")"
-  "$TOOLS_ROOT/bin/agg" \
-    --theme github-dark --font-family 'DejaVu Sans Mono' --font-size 16 \
-    --line-height 1.25 --fps-cap 12 --idle-time-limit 6 \
-    --last-frame-duration 3 "$CAST" "$GIF"
 }
 
 case ${1:---play} in

@@ -16,8 +16,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PROXY_PORT = 49095
-DEMO_DIR = Path(__file__).resolve().parent
-RUNTIME_DIR = DEMO_DIR / ".demo-runtime"
+try:
+    runtime_value = os.environ["AGENT_PROCS_DEMO_RUNTIME"]
+except KeyError as error:
+    raise SystemExit("AGENT_PROCS_DEMO_RUNTIME is required") from error
+if not runtime_value:
+    raise SystemExit("AGENT_PROCS_DEMO_RUNTIME must not be empty")
+RUNTIME_DIR = Path(runtime_value).resolve(strict=True)
+if not RUNTIME_DIR.is_dir():
+    raise SystemExit("AGENT_PROCS_DEMO_RUNTIME must name an existing directory")
 CRASH_FILE = RUNTIME_DIR / "crash-api"
 GENERATION_FILE = RUNTIME_DIR / "api-generation"
 

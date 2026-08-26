@@ -1,4 +1,3 @@
-session: agent-procs-portfolio-demo
 proxy: true
 proxy_port: 49095
 
