@@ -186,9 +186,13 @@ agent-procs --session projectB run "make serve" --name app
 agent-procs --session projectA status   # only shows projectA's processes
 ```
 
-## Architecture
+## Architecture and security boundary
 
-The CLI communicates with a per-session background daemon over a Unix domain socket. The daemon manages process lifecycles, captures stdout/stderr to log files, handles wait conditions, and supervises processes with restart policies and file watchers. The daemon auto-starts on first use and exits when all processes are stopped.
+![AgentProcs architecture showing stateless CLI invocations, the protected Unix socket, persistent per-session daemon, managed process groups, durable logs, and optional localhost proxy](docs/assets/architecture.svg)
+
+Each [Quick start](#quick-start) command is a short-lived CLI client, while a per-session daemon persists across invocations and owns the control plane. CLI requests cross a Unix domain socket whose `0700` parent directory limits access to the current user; the daemon supervises process groups, durable session logs, and the optional [Reverse proxy](#reverse-proxy).
+
+AgentProcs provides process supervision, not sandboxing: managed commands retain the current user's filesystem and network access. Use a container or VM when isolation is required; see [Sessions](#sessions) for operational separation and [SECURITY.md](SECURITY.md) for the complete security model.
 
 ## Exit codes
 
