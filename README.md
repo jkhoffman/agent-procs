@@ -1,6 +1,23 @@
-# agent-procs
+# AgentProcs
 
-Concurrent process runner for AI agents. Processes run in a background daemon and persist across CLI invocations.
+Keep development services alive, observable, and controllable across separate AI coding-agent tool calls.
+
+[![Crates.io](https://img.shields.io/crates/v/agent-procs)](https://crates.io/crates/agent-procs) [![docs.rs](https://img.shields.io/docsrs/agent-procs)](https://docs.rs/agent-procs) [![License: MIT](https://img.shields.io/crates/l/agent-procs)](LICENSE) ![Platform: Linux and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-informational)
+
+Coding agents often start an API, web app, or worker in one shell, then lose the process context on a later tool call. AgentProcs keeps those services under a per-session daemon so the next call can inspect logs, check status, restart a process, or stop everything cleanly.
+
+AgentProcs is for developers using agentic coding workflows on Linux and macOS (Unix only). It provides same-user process supervision, not sandboxing; managed commands retain your filesystem and network access. See [Architecture and security boundary](#architecture-and-security-boundary) for details.
+
+- A daemon persists across CLI calls, with project and session isolation.
+- Readiness checks and dependency ordering start services in the right sequence.
+- Durable indexed logs and JSON status keep process state available to agents and scripts.
+- Restart policies and file watching recover development services; an optional proxy gives them named localhost URLs.
+
+[Quick start](#quick-start) · [Reproduce the demo](docs/demo/README.md) · [Architecture and security](#architecture-and-security-boundary)
+
+![Animated terminal demo where dependent API and web services start, the API exits with status 42 and restarts as generation 2, and both services shut down cleanly](docs/assets/agent-procs-demo.gif)
+
+This is a real, reproducible local run. Follow [the demo instructions](docs/demo/README.md) to play or record it yourself.
 
 ## Install
 
