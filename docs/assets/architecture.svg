@@ -114,7 +114,7 @@
     <rect class="optional" x="390" y="900" width="340" height="140" rx="16"/>
     <text class="heading" x="414" y="939">Optional proxy</text>
     <text class="mono" x="414" y="978">127.0.0.1:&lt;port&gt;</text>
-    <text class="body" x="414" y="1011">routes to process ports</text>
+    <text class="small" x="414" y="1011">*.localhost → process ports</text>
   </g>
 
   <g role="group" aria-label="Flow legend">
