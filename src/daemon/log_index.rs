@@ -142,8 +142,10 @@ impl IndexReader {
         self.file.seek(SeekFrom::Start(offset))?;
         let mut buf = vec![0u8; actual * RECORD_SIZE as usize];
         self.file.read_exact(&mut buf)?;
-        let records = buf
-            .chunks_exact(RECORD_SIZE as usize)
+        let (chunks, remainder) = buf.as_chunks::<{ RECORD_SIZE as usize }>();
+        debug_assert!(remainder.is_empty());
+        let records = chunks
+            .iter()
             .map(|chunk| IndexRecord {
                 byte_offset: u64::from_le_bytes(chunk[0..8].try_into().unwrap()),
                 seq: u64::from_le_bytes(chunk[8..16].try_into().unwrap()),

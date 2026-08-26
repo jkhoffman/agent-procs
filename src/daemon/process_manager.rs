@@ -73,7 +73,10 @@ impl ProcessManager {
         }
     }
 
-    #[allow(unsafe_code, clippy::unused_async)]
+    // Keep the async API used by the daemon actor; process setup is synchronous,
+    // while the spawned capture tasks perform the asynchronous I/O.
+    #[allow(unknown_lints)]
+    #[allow(unsafe_code, clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn spawn_process(
         &mut self,
         command: &str,
