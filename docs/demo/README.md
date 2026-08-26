@@ -42,9 +42,9 @@ Outputs are committed at:
 
 ## Expected scenario
 
-1. `agent-procs up` starts `api`, then its dependent `web` service, plus the reverse proxy.
-2. `status` reports both processes running and ready.
-3. A request to `web.localhost:49095` returns the web payload and the API payload it fetched upstream.
+1. `agent-procs up` starts `api`, waits for its readiness message, then starts the dependent `web` service and reverse proxy.
+2. `status` reports both processes running with stable named URLs.
+3. A request to `web.localhost:49095` returns ready responses from the web service and the API it fetched upstream.
 4. The API receives a controlled crash request and exits with status `42`.
 5. AgentProcs logs `[agent-procs] Restarted`; the API comes back as generation `2`.
 6. A final API request succeeds, `down` stops the session, and the script confirms that no demo processes, listeners, socket, PID file, runtime files, or isolated state remain.
