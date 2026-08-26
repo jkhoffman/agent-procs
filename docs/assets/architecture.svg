@@ -45,7 +45,7 @@
     <text class="heading" x="98" y="151">Coding agent</text>
     <text class="heading" x="98" y="184">or developer</text>
     <line class="divider" x1="52" y1="201" x2="313" y2="201"/>
-    <text class="small" x="52" y="229">invokes commands repeatedly</text>
+    <text class="small" x="52" y="229">invokes commands</text>
   </g>
 
   <g role="group" aria-label="Repeated stateless CLI invocations">
