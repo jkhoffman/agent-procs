@@ -7,7 +7,7 @@ This demo runs real local processes. It starts a small API and a web service, ex
 ## Prerequisites
 
 - Linux or macOS
-- Bash, Python 3, and a Rust toolchain with Cargo
+- Bash 3.2 or newer, Python 3.9 or newer, and a Rust toolchain with Cargo
 - `git` and network access when the pinned recording tools are not already installed
 - DejaVu Sans Mono (used to render the GIF)
 
@@ -29,7 +29,7 @@ scripts/record-demo.sh --record
 scripts/record-demo.sh --render
 ```
 
-`--record` builds AgentProcs in release mode and installs missing recording tools under `${AGENT_PROCS_DEMO_TOOLS:-${TMPDIR:-/tmp}/agent-procs-demo-tools}`. Set `AGENT_PROCS_DEMO_TOOLS` to reuse another tool directory:
+`--record` builds AgentProcs in release mode and installs missing recording tools in a revision-specific directory beneath `${AGENT_PROCS_DEMO_TOOLS:-${TMPDIR:-/tmp}/agent-procs-demo-tools}`. Set `AGENT_PROCS_DEMO_TOOLS` to reuse another portable tool cache:
 
 ```bash
 AGENT_PROCS_DEMO_TOOLS="$HOME/.cache/agent-procs-demo-tools" scripts/record-demo.sh --record
@@ -49,7 +49,9 @@ Outputs are committed at:
 5. AgentProcs logs `[agent-procs] Restarted`; the API comes back as generation `2`.
 6. A final API request succeeds, `down` stops the session, and the script confirms that no demo processes, listeners, socket, PID file, runtime files, or isolated state remain.
 
-The script traps normal exit, interruption, and termination and makes cleanup idempotent. Before each run it removes stale demo state, asks AgentProcs to stop the fixed `portfolio-demo` session, and refuses to start if a demo port is occupied. Runtime and AgentProcs state stay inside `docs/demo` while the demo is active and are deleted after verification.
+The script reserves `agent-procs-portfolio-demo` for the demo and acquires an atomic owner marker under the same uid-private `/tmp/agent-procs-<uid>` directory as the session socket and PID file. It refuses to start if that marker, any session artifact, or isolated demo state already exists; it never calls `down` or deletes those paths unless the marker still exactly identifies the current script process and repository. `INT` and `TERM` exit with status `130` and `143`, respectively, and the single `EXIT` cleanup path remains idempotent. Runtime and AgentProcs state stay inside `docs/demo` while active and are deleted after verification.
+
+This fail-closed rule intentionally includes stale markers left by `kill -9` or a machine crash. First confirm that the marker's recorded PID is not a live owner and that no process, listener, socket, or PID file belongs to the session; then remove the stale marker and isolated `docs/demo/.demo-runtime` / `.agent-procs-state` paths manually. The script never takes over stale ownership automatically.
 
 ## Pinned recording tools
 
@@ -58,4 +60,4 @@ The script verifies these versions and installs them with Cargo when needed:
 - `asciinema 3.0.0` from crates.io: `cargo install --locked --version 3.0.0 asciinema`
 - `agg 1.5.0` from immutable Git revision `5592b9790ba7c6d5ffa232176e29a1d3cadf8fe2`: `cargo install --locked --git https://github.com/asciinema/agg --rev 5592b9790ba7c6d5ffa232176e29a1d3cadf8fe2 agg`
 
-The revision is the commit referenced by the upstream `v1.5.0` tag; the script deliberately installs by full revision rather than by the mutable tag name.
+The revision is the commit referenced by the upstream `v1.5.0` tag. The script installs into a path containing the full revision and parses Cargo's `.crates2.json` install record to require the exact Git source revision and `agg` binary, rather than trusting `agg --version` alone.

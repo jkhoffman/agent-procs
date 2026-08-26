@@ -87,7 +87,9 @@ def watch_for_crash() -> None:
 
 
 def serve(role: str) -> None:
-    host = os.environ.get("HOST", "127.0.0.1")
+    # This demo is intentionally local-only. Do not let an ambient HOST value
+    # widen the listening interface.
+    host = "127.0.0.1"
     port = int(os.environ["PORT"])
     generation = next_generation() if role == "api" else 1
     server = ThreadingHTTPServer((host, port), Handler)
