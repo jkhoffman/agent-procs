@@ -17,7 +17,7 @@ This is a real, reproducible local run. Follow [the demo instructions](docs/demo
 
 [![CI](https://github.com/jkhoffman/agent-procs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jkhoffman/agent-procs/actions/workflows/ci.yml) [![Crates.io](https://img.shields.io/crates/v/agent-procs)](https://crates.io/crates/agent-procs) [![docs.rs](https://img.shields.io/docsrs/agent-procs)](https://docs.rs/agent-procs) [![License: MIT](https://img.shields.io/crates/l/agent-procs)](LICENSE) ![Platform: Linux and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-informational)
 
-**Engineering proof:** [Unit tests live alongside the source](https://github.com/jkhoffman/agent-procs/tree/main/src), with [property, integration, and end-to-end tests](https://github.com/jkhoffman/agent-procs/tree/main/tests); current [v0.6.2 release binaries](https://github.com/jkhoffman/agent-procs/releases/tag/v0.6.2) target Linux and macOS on x86_64 and ARM64.
+**Engineering proof:** [Unit tests live alongside the source](https://github.com/jkhoffman/agent-procs/tree/main/src), with [property, integration, and end-to-end tests](https://github.com/jkhoffman/agent-procs/tree/main/tests); current [v0.6.3 release binaries](https://github.com/jkhoffman/agent-procs/releases/tag/v0.6.3) target Linux and macOS on x86_64 and ARM64.
 
 [Quick start](#quick-start) · [Architecture and security](#architecture-and-security-boundary)
 

@@ -1,9 +1,9 @@
 class AgentProcs < Formula
   desc "Concurrent process runner for AI agents"
   homepage "https://github.com/jkhoffman/agent-procs"
-  url "https://github.com/jkhoffman/agent-procs/archive/6faae0fae78c6255fe8724cf13c70f74993fb524.tar.gz"
-  version "0.6.2"
-  sha256 "64fa7afc14264fd077a73e4bd747c72eb7a38626bbc2b0ec600d06324e6f72e8"
+  url "https://github.com/jkhoffman/agent-procs/archive/808e125d1dd9baf3087f13eec71785f63de26c49.tar.gz"
+  version "0.6.3"
+  sha256 "6f52b5b04b427822fd5e3b2742d7bb15125e40ef16685519310dfb5489929853"
   license "MIT"
 
   depends_on "rust" => :build
