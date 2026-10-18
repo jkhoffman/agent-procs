@@ -143,7 +143,7 @@ impl IndexReader {
         let mut buf = vec![0u8; actual * RECORD_SIZE as usize];
         self.file.read_exact(&mut buf)?;
         let (chunks, remainder) = buf.as_chunks::<{ RECORD_SIZE as usize }>();
-        debug_assert!(remainder.is_empty());
+        debug_assert!(remainder.is_empty(), "{remainder:?}");
         let records = chunks
             .iter()
             .map(|chunk| IndexRecord {
