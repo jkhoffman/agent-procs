@@ -22,7 +22,7 @@ processes:
 ";
     c.bench_function("config_parse", |b| {
         b.iter(|| {
-            let _: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+            let _: ProjectConfig = yaml_serde::from_str(yaml).unwrap();
         });
     });
 }

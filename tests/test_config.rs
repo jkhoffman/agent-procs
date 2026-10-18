@@ -5,7 +5,7 @@ use tempfile::TempDir;
 #[test]
 fn test_parse_minimal_config() {
     let yaml = "processes:\n  web:\n    cmd: npm run dev\n";
-    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: ProjectConfig = yaml_serde::from_str(yaml).unwrap();
     assert_eq!(config.processes.len(), 1);
     assert_eq!(config.processes["web"].cmd, "npm run dev");
 }
@@ -25,7 +25,7 @@ processes:
     ready: "Listening on :8080"
     depends_on: [db]
 "#;
-    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: ProjectConfig = yaml_serde::from_str(yaml).unwrap();
     assert_eq!(config.processes["api"].cwd, Some("./backend".into()));
     assert_eq!(
         config.processes["api"].env.get("DATABASE_URL").unwrap(),
@@ -46,7 +46,7 @@ processes:
     cmd: start-api
     depends_on: [db, cache]
 ";
-    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: ProjectConfig = yaml_serde::from_str(yaml).unwrap();
     let order = config.startup_order().unwrap();
     assert_eq!(order.len(), 2);
     assert!(order[0].contains(&"db".to_string()));
@@ -58,7 +58,7 @@ processes:
 #[test]
 fn test_topological_sort_cycle_detection() {
     let yaml = "processes:\n  a:\n    cmd: x\n    depends_on: [b]\n  b:\n    cmd: y\n    depends_on: [a]\n";
-    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: ProjectConfig = yaml_serde::from_str(yaml).unwrap();
     assert!(config.startup_order().is_err());
 }
 
@@ -83,7 +83,7 @@ processes:
     cmd: npm run dev
     port: 3000
 ";
-    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: ProjectConfig = yaml_serde::from_str(yaml).unwrap();
     assert_eq!(config.proxy, Some(true));
     assert_eq!(config.proxy_port, Some(9000));
     assert_eq!(config.processes["web"].port, Some(3000));
@@ -93,7 +93,7 @@ processes:
 fn test_config_proxy_fields_backward_compat() {
     // Old configs without proxy fields should still parse
     let yaml = "processes:\n  web:\n    cmd: npm run dev\n";
-    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: ProjectConfig = yaml_serde::from_str(yaml).unwrap();
     assert_eq!(config.proxy, None);
     assert_eq!(config.proxy_port, None);
     assert_eq!(config.processes["web"].port, None);
@@ -114,7 +114,7 @@ processes:
     watch_ignore:
       - "*.generated.ts"
 "#;
-    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: ProjectConfig = yaml_serde::from_str(yaml).unwrap();
     let server = &config.processes["server"];
     assert_eq!(server.autorestart.as_deref(), Some("on-failure"));
     assert_eq!(server.max_restarts, Some(5));
@@ -130,7 +130,7 @@ processes:
   db:
     cmd: "pg_ctl start"
 "#;
-    let config: ProjectConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: ProjectConfig = yaml_serde::from_str(yaml).unwrap();
     let db = &config.processes["db"];
     assert!(db.autorestart.is_none());
     assert!(db.max_restarts.is_none());

@@ -18,7 +18,7 @@ pub enum ConfigError {
     Read(#[source] std::io::Error),
 
     #[error("invalid config: {0}")]
-    Parse(#[source] serde_yaml::Error),
+    Parse(#[source] yaml_serde::Error),
 
     #[error("dependency cycle detected")]
     CycleDetected,

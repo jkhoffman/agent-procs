@@ -164,7 +164,7 @@ pub fn load_config(config_path: Option<&str>) -> Result<(PathBuf, ProjectConfig)
             .ok_or(ConfigError::NotFound)?,
     };
     let content = std::fs::read_to_string(&path).map_err(ConfigError::Read)?;
-    let config: ProjectConfig = serde_yaml::from_str(&content).map_err(ConfigError::Parse)?;
+    let config: ProjectConfig = yaml_serde::from_str(&content).map_err(ConfigError::Parse)?;
     Ok((path, config))
 }
 
