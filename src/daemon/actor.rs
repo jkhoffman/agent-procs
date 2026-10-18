@@ -395,7 +395,12 @@ impl ProcessManagerActor {
                 let _ = reply.send(self.pm.session_name().to_string());
             }
             PmCommand::IsProcessExited { target, reply } => {
-                let _ = reply.send(self.pm.is_process_exited(&target));
+                let exited = self.pm.is_process_exited(&target);
+                // Checking may have reaped the child. The periodic refresh only
+                // publishes when it reaps something itself, so publish here or
+                // the proxy keeps routing to the dead process.
+                self.publish_proxy_state();
+                let _ = reply.send(exited);
             }
             PmCommand::EnableProxy { proxy_port, reply } => {
                 if let Some(existing) = self.proxy_port {
