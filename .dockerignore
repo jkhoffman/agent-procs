@@ -1,0 +1,17 @@
+# Build output and VCS metadata
+target/
+.git/
+.worktrees/
+.superpowers/
+
+# CI, hooks, and tooling not needed to build the binary
+.github/
+.githooks/
+.gitignore
+Dockerfile
+.dockerignore
+
+# Docs, packaging, and scripts
+docs/
+HomebrewFormula/
+scripts/
