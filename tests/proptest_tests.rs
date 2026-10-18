@@ -225,7 +225,7 @@ proptest! {
             let _ = write!(yaml, "  {}:\n    cmd: {}\n", names[i], cmds[i]);
         }
         // Parsing should not panic (may fail on duplicate keys, which is fine)
-        let result: Result<agent_procs::config::ProjectConfig, _> = serde_yaml::from_str(&yaml);
+        let result: Result<agent_procs::config::ProjectConfig, _> = yaml_serde::from_str(&yaml);
         // We just ensure no panic occurred; parse errors are acceptable for random input
         let _ = result;
     }
