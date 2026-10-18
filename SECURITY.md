@@ -29,6 +29,16 @@ mode follows the operating system and process umask (and may be `0755` with a
 `022` umask); effective access control comes from the `0700` parent directory.
 No TCP listener is opened for daemon communication.
 
+Before using the directory, the CLI and daemon check that it is a real
+directory (not a symlink) owned by the current user. A directory you own with
+group or world access (for example one created by an older version) is
+tightened to `0700`; a directory owned by another user is refused with an
+error and exit code 1. The CLI also refuses to talk to a socket served by a
+different user. This relies on `/tmp` having the sticky bit set (the default on
+Linux and macOS), which stops other users from renaming a directory you own.
+If neither `XDG_STATE_HOME` nor `HOME` is set, session state is kept under the
+runtime directory rather than in a shared location.
+
 ### PID file permissions
 
 PID files are stored in `/tmp/agent-procs-<uid>/` alongside the socket, inside
