@@ -261,9 +261,95 @@ fn test_up_with_proxy_config() {
     let _ = ctx.cmd().args(["--session", &ctx.session, "down"]).output();
 }
 
+/// Backend for the route-cleanup test: listens on `$PORT` (injected by the
+/// daemon), answers `backend-alive` on every GET, and exits as soon as the file
+/// named by argv[1] exists, so the test (not a timer) decides when the managed
+/// process dies.
+const EXIT_ON_FILE_BACKEND: &str = r#"
+import http.server, os, socketserver, sys, threading, time
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"backend-alive"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+socketserver.TCPServer.allow_reuse_address = True
+httpd = socketserver.TCPServer(("127.0.0.1", int(os.environ["PORT"])), Handler)
+
+def watch_for_stop_file():
+    while not os.path.exists(sys.argv[1]):
+        time.sleep(0.05)
+    httpd.shutdown()
+
+threading.Thread(target=watch_for_stop_file, daemon=True).start()
+httpd.serve_forever()
+"#;
+
+/// Upper bound for asynchronous state changes (backend start, exit propagation).
+/// Generous so slow CI runners pass, but finite so a real bug still fails.
+const PROXY_POLL_TIMEOUT: Duration = Duration::from_secs(20);
+const PROXY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Request `/` through the proxy with the given Host subdomain.
+/// Returns the curl exit code and body (empty body on curl failure).
+fn proxy_get(proxy_port: u16, name: &str) -> (Option<i32>, String) {
+    let output = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "--max-time",
+            "5",
+            "-H",
+            &format!("Host: {}.localhost:{}", name, proxy_port),
+            &format!("http://127.0.0.1:{}/", proxy_port),
+        ])
+        .output()
+        .unwrap();
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    )
+}
+
+/// Poll the proxy until `done(body)` is true or `PROXY_POLL_TIMEOUT` elapses.
+/// On timeout, returns `Err` with the last observed curl exit code and body.
+fn poll_proxy(
+    proxy_port: u16,
+    name: &str,
+    done: impl Fn(&str) -> bool,
+) -> Result<(), (Option<i32>, String)> {
+    let deadline = std::time::Instant::now() + PROXY_POLL_TIMEOUT;
+    loop {
+        let (code, body) = proxy_get(proxy_port, name);
+        if code == Some(0) && done(&body) {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err((code, body));
+        }
+        std::thread::sleep(PROXY_POLL_INTERVAL);
+    }
+}
+
+/// Test: once a proxied process exits, its route is removed from the proxy.
+///
+/// First waits until the proxy demonstrably forwards to the live backend, then
+/// makes the backend exit and polls (bounded) until the proxy reports the route
+/// is gone. `status` is deliberately not polled: it refreshes exit state itself
+/// and would mask a stalled background refresh.
 #[test]
 fn test_proxy_drops_route_after_process_exit() {
     let ctx = TestContext::new("t-proxy-exit");
+
+    let work_dir = tempfile::TempDir::new().unwrap();
+    let script_path = work_dir.path().join("backend.py");
+    let stop_path = work_dir.path().join("stop");
+    std::fs::write(&script_path, EXIT_ON_FILE_BACKEND).unwrap();
 
     let run_output = ctx
         .cmd()
@@ -271,11 +357,15 @@ fn test_proxy_drops_route_after_process_exit() {
             "--session",
             &ctx.session,
             "run",
-            "python3 -c \"import http.server, socketserver, threading; httpd = socketserver.TCPServer(('127.0.0.1', 4510), http.server.SimpleHTTPRequestHandler); threading.Timer(1.0, httpd.shutdown).start(); httpd.serve_forever()\"",
+            &format!(
+                "python3 '{}' '{}'",
+                script_path.display(),
+                stop_path.display()
+            ),
             "--name",
             "web",
-            "--port",
-            "4510",
+            // No --port: the daemon picks a free port and injects it as $PORT,
+            // so the test never hard-codes or pre-reserves a port that could collide.
             "--proxy",
         ])
         .output()
@@ -296,28 +386,28 @@ fn test_proxy_drops_route_after_process_exit() {
             port_str.parse::<u16>().ok()
         })
     }
-    .expect("could not parse proxy port");
+    .unwrap_or_else(|| panic!("could not parse proxy port from stderr: {}", stderr));
 
-    std::thread::sleep(Duration::from_secs(2));
+    // The route must work while the backend is alive, otherwise the cleanup
+    // check below would pass vacuously.
+    if let Err((code, body)) = poll_proxy(proxy_port, "web", |b| b == "backend-alive") {
+        panic!(
+            "proxy never forwarded to the live backend within {:?}: last curl exit={:?} body={:?}",
+            PROXY_POLL_TIMEOUT, code, body
+        );
+    }
 
-    let curl_output = std::process::Command::new("curl")
-        .args([
-            "-s",
-            "--max-time",
-            "5",
-            "-H",
-            &format!("Host: web.localhost:{}", proxy_port),
-            &format!("http://127.0.0.1:{}/", proxy_port),
-        ])
-        .output()
-        .unwrap();
-    assert!(curl_output.status.success());
-    let body = String::from_utf8_lossy(&curl_output.stdout);
-    assert!(
-        body.contains("no running process named 'web'"),
-        "expected stale route to be removed, got: {}",
-        body
-    );
+    // Make the managed process exit.
+    std::fs::write(&stop_path, b"").unwrap();
+
+    if let Err((code, body)) = poll_proxy(proxy_port, "web", |b| {
+        b.contains("no running process named 'web'")
+    }) {
+        panic!(
+            "stale route was not removed within {:?} after process exit: last curl exit={:?} body={:?}",
+            PROXY_POLL_TIMEOUT, code, body
+        );
+    }
 
     let _ = ctx
         .cmd()
