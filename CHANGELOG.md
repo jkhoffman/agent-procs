@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced the unmaintained `serde_yaml` with `yaml_serde` 0.10 (the YAML
+  organization's maintained fork, backed by `libyaml-rs`), removing
+  `unsafe-libyaml` (RUSTSEC-2024-0449). Accepted config syntax and error text
+  are unchanged and covered by new tests. Library API: `ConfigError::Parse`
+  now wraps `yaml_serde::Error` (breaking for library users; CLI unchanged).
+- Updated compatible dependencies and bumped the `criterion` dev-dependency
+  to 0.8.
+
+### Security
+
+- Updated `lru` to 0.18.5 via `ratatui-core` 0.1.2, resolving
+  RUSTSEC-2026-0253, and removed the temporary `cargo audit` exception.
+
+### Fixed
+
+- The Dockerfile now builds with Rust 1.88 (the crate's MSRV) and `--locked`.
+- Clippy is clean again on Rust 1.99.
+
 ## [0.6.3] - 2026-08-26
 
 ### Fixed
