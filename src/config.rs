@@ -266,7 +266,7 @@ mod tests {
     fn test_startup_order_empty() {
         let cfg = config_with(vec![]);
         let groups = cfg.startup_order().unwrap();
-        assert!(groups.is_empty());
+        assert!(groups.is_empty(), "{groups:?}");
     }
 
     #[test]

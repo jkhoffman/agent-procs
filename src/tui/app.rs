@@ -875,7 +875,7 @@ mod tests {
 
         // Without a disk reader, returns empty (no filtered index built)
         let lines = app.visible_lines("web", 10).unwrap();
-        assert!(lines.is_empty());
+        assert!(lines.is_empty(), "{lines:?}");
     }
 
     #[test]

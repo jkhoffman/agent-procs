@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(matches, vec![0, 1]);
 
         let matches = reader.scan_matching_lines("nonexistent", StreamMode::Stdout);
-        assert!(matches.is_empty());
+        assert!(matches.is_empty(), "{matches:?}");
     }
 
     #[test]

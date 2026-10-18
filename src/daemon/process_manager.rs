@@ -794,8 +794,8 @@ mod tests {
         pm.processes.insert("runner".into(), proc);
 
         let (restartable, exhausted) = pm.classify_restart_candidates();
-        assert!(restartable.is_empty());
-        assert!(exhausted.is_empty());
+        assert!(restartable.is_empty(), "{restartable:?}");
+        assert!(exhausted.is_empty(), "{exhausted:?}");
 
         // Clean up the child process
         if pid > 0 {
@@ -824,8 +824,8 @@ mod tests {
         pm.processes.insert("stopped".into(), proc);
 
         let (restartable, exhausted) = pm.classify_restart_candidates();
-        assert!(restartable.is_empty());
-        assert!(exhausted.is_empty());
+        assert!(restartable.is_empty(), "{restartable:?}");
+        assert!(exhausted.is_empty(), "{exhausted:?}");
     }
 
     #[test]
@@ -840,8 +840,8 @@ mod tests {
         pm.processes.insert("clean".into(), proc);
 
         let (restartable, exhausted) = pm.classify_restart_candidates();
-        assert!(restartable.is_empty());
-        assert!(exhausted.is_empty());
+        assert!(restartable.is_empty(), "{restartable:?}");
+        assert!(exhausted.is_empty(), "{exhausted:?}");
     }
 
     #[test]
@@ -857,8 +857,8 @@ mod tests {
         pm.processes.insert("pending".into(), proc);
 
         let (restartable, exhausted) = pm.classify_restart_candidates();
-        assert!(restartable.is_empty());
-        assert!(exhausted.is_empty());
+        assert!(restartable.is_empty(), "{restartable:?}");
+        assert!(exhausted.is_empty(), "{exhausted:?}");
     }
 
     #[test]
@@ -874,7 +874,7 @@ mod tests {
 
         let (restartable, exhausted) = pm.classify_restart_candidates();
         assert_eq!(restartable, vec!["crasher"]);
-        assert!(exhausted.is_empty());
+        assert!(exhausted.is_empty(), "{exhausted:?}");
     }
 
     #[test]
@@ -890,7 +890,7 @@ mod tests {
         pm.processes.insert("tired".into(), proc);
 
         let (restartable, exhausted) = pm.classify_restart_candidates();
-        assert!(restartable.is_empty());
+        assert!(restartable.is_empty(), "{restartable:?}");
         assert_eq!(exhausted, vec!["tired"]);
     }
 
@@ -907,6 +907,6 @@ mod tests {
 
         let (restartable, exhausted) = pm.classify_restart_candidates();
         assert_eq!(restartable, vec!["always-on"]);
-        assert!(exhausted.is_empty());
+        assert!(exhausted.is_empty(), "{exhausted:?}");
     }
 }
