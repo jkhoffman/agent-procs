@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `stop`, `restart`, `stop-all`, and `down` now wait 2 seconds (was 10) after
+  `SIGTERM` before sending `SIGKILL`, and they send `SIGKILL` to the whole
+  process group every time. Members that outlive a leader that exited cleanly,
+  or a leader that had already exited, are killed too. Processes that need
+  more than 2 seconds to shut down now report exit code `-9`.
+- `run` and `restart` fail with `stop-all in progress` while a `stop-all` is
+  running.
+- An exited process's leader stays as a `<defunct>` entry until the process is
+  stopped, restarted, or cleared, which keeps its process-group id from being
+  reused.
+- A `restart` whose new process fails to start leaves the record listed as
+  `failed` instead of removing it.
 - Replaced the unmaintained `serde_yaml` with `yaml_serde` 0.10 (the YAML
   organization's maintained fork, backed by `libyaml-rs`), removing
   `unsafe-libyaml` (RUSTSEC-2024-0449). Accepted config syntax and error text
@@ -24,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `run` and `restart` exit 1 when the process's log or index file can't be
+  opened, instead of reporting success and leaving a child with no log that
+  died of `SIGPIPE` on its first write (#6).
+- A slow stop no longer blocks every other command for up to 10 seconds, and
+  `stop-all` stops processes in parallel.
+- An auto-restart no longer hangs the daemon when an exited process's child
+  still holds its output pipe.
 - The Dockerfile now builds with Rust 1.88 (the crate's MSRV) and `--locked`.
 - Clippy is clean again on Rust 1.99.
 

@@ -108,6 +108,14 @@ agent-procs run "node server.js" --name api --port 3001 --proxy
 | `ui` | Open terminal UI |
 | `completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
 
+### Stopping
+
+`stop`, `restart`, `stop-all`, and `down` send `SIGTERM` to the process's whole group, wait up to 2 seconds, then send `SIGKILL` to the group. Anything still in the group at that point is killed, including children that outlived a leader that exited cleanly, or a leader that had already exited before the stop. A process killed this way reports exit code `-9`. Other commands are answered while a stop is in progress, and `stop-all` stops every process in parallel. `run` and `restart` fail with `stop-all in progress` until a running `stop-all` finishes.
+
+A process that has exited stays listed until it is stopped, restarted, or cleared by `stop-all`, and until then `ps` shows its leader as a `<defunct>` entry. The daemon leaves the leader unreaped on purpose: while it exists, its process-group id can't be reused, so a later `stop` can't signal an unrelated group.
+
+`run` and `restart` fail with exit code 1 if the process's log files can't be opened, and no process is started. If `restart` fails this way, the process stays listed as `failed`.
+
 ## Restart policies
 
 Automatically recover from crashes without agent intervention.

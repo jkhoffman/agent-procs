@@ -297,7 +297,7 @@ agent-procs run "go run ./cmd/server" --name api \
 2. **Check status after starting** — verify processes are actually running
 3. **Clean up when done** — run `down` or `stop-all` to avoid orphan processes
 4. **Use `--json` for parsing** — `agent-procs status --json` when you need structured data
-5. **Check exit codes** — non-zero exit means something failed, check logs
+5. **Check exit codes** — non-zero exit means something failed, check logs (`run` also fails if its log files can't be written)
 6. **Prefer config files for repeatable setups** — if a project needs the same processes every time, write an `agent-procs.yaml`
 7. **Use `--autorestart` for crash-prone services** — especially databases and network services that may fail transiently
 8. **Use `--watch` during development** — avoids manual restart cycles when editing code
