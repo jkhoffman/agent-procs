@@ -336,6 +336,107 @@ fn poll_proxy(
     }
 }
 
+/// Serializes the tests that let the daemon auto-assign a backend port.
+///
+/// Every daemon starts its auto-port search at the same port and only
+/// bind-tests it, so two sessions starting at the same moment can be handed the
+/// same port and one backend then dies with "address already in use". Holding
+/// this lock for the lifetime of an [`ExitOnFileBackend`] keeps those tests from
+/// racing each other in the default parallel test run.
+static AUTO_PORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A running `EXIT_ON_FILE_BACKEND` behind the proxy.
+struct ExitOnFileBackend {
+    proxy_port: u16,
+    stop_path: std::path::PathBuf,
+    _work_dir: tempfile::TempDir,
+    // Declared last so it is released after the rest of the backend is dropped.
+    _auto_port_guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl ExitOnFileBackend {
+    /// Start the backend as process `web` with `--proxy` and wait until the
+    /// proxy demonstrably forwards to it, so later cleanup checks cannot pass
+    /// vacuously.
+    fn start(ctx: &TestContext) -> Self {
+        let auto_port_guard = AUTO_PORT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let work_dir = tempfile::TempDir::new().unwrap();
+        let script_path = work_dir.path().join("backend.py");
+        let stop_path = work_dir.path().join("stop");
+        std::fs::write(&script_path, EXIT_ON_FILE_BACKEND).unwrap();
+
+        let run_output = ctx
+            .cmd()
+            .args([
+                "--session",
+                &ctx.session,
+                "run",
+                &format!(
+                    "python3 '{}' '{}'",
+                    script_path.display(),
+                    stop_path.display()
+                ),
+                "--name",
+                "web",
+                // No --port: the daemon picks a free port and injects it as $PORT,
+                // so the test never hard-codes or pre-reserves a port that could collide.
+                "--proxy",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            run_output.status.success(),
+            "run failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+
+        let stderr = String::from_utf8_lossy(&run_output.stderr);
+        let proxy_port = {
+            let prefix = "http://localhost:";
+            stderr.find(prefix).and_then(|idx| {
+                let after = &stderr[idx + prefix.len()..];
+                let port_str: String = after.chars().take_while(char::is_ascii_digit).collect();
+                port_str.parse::<u16>().ok()
+            })
+        }
+        .unwrap_or_else(|| panic!("could not parse proxy port from stderr: {}", stderr));
+
+        if let Err((code, body)) = poll_proxy(proxy_port, "web", |b| b == "backend-alive") {
+            panic!(
+                "proxy never forwarded to the live backend within {:?}: last curl exit={:?} body={:?}",
+                PROXY_POLL_TIMEOUT, code, body
+            );
+        }
+
+        Self {
+            proxy_port,
+            stop_path,
+            _work_dir: work_dir,
+            _auto_port_guard: auto_port_guard,
+        }
+    }
+
+    /// Make the managed process exit.
+    fn stop(&self) {
+        std::fs::write(&self.stop_path, b"").unwrap();
+    }
+
+    /// Poll (bounded) until the proxy reports the route for `web` is gone.
+    fn assert_route_dropped(&self) {
+        if let Err((code, body)) = poll_proxy(self.proxy_port, "web", |b| {
+            b.contains("no running process named 'web'")
+        }) {
+            panic!(
+                "stale route was not removed within {:?} after process exit: last curl exit={:?} body={:?}",
+                PROXY_POLL_TIMEOUT, code, body
+            );
+        }
+    }
+}
+
 /// Test: once a proxied process exits, its route is removed from the proxy.
 ///
 /// First waits until the proxy demonstrably forwards to the live backend, then
@@ -345,69 +446,64 @@ fn poll_proxy(
 #[test]
 fn test_proxy_drops_route_after_process_exit() {
     let ctx = TestContext::new("t-proxy-exit");
+    let backend = ExitOnFileBackend::start(&ctx);
 
-    let work_dir = tempfile::TempDir::new().unwrap();
-    let script_path = work_dir.path().join("backend.py");
-    let stop_path = work_dir.path().join("stop");
-    std::fs::write(&script_path, EXIT_ON_FILE_BACKEND).unwrap();
+    backend.stop();
+    backend.assert_route_dropped();
 
-    let run_output = ctx
+    let _ = ctx
         .cmd()
-        .args([
-            "--session",
-            &ctx.session,
-            "run",
-            &format!(
-                "python3 '{}' '{}'",
-                script_path.display(),
-                stop_path.display()
-            ),
-            "--name",
-            "web",
-            // No --port: the daemon picks a free port and injects it as $PORT,
-            // so the test never hard-codes or pre-reserves a port that could collide.
-            "--proxy",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        run_output.status.success(),
-        "run failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&run_output.stdout),
-        String::from_utf8_lossy(&run_output.stderr)
-    );
+        .args(["--session", &ctx.session, "stop-all"])
+        .output();
+}
 
-    let stderr = String::from_utf8_lossy(&run_output.stderr);
-    let proxy_port = {
-        let prefix = "http://localhost:";
-        stderr.find(prefix).and_then(|idx| {
-            let after = &stderr[idx + prefix.len()..];
-            let port_str: String = after.chars().take_while(char::is_ascii_digit).collect();
-            port_str.parse::<u16>().ok()
+/// Test: the route is also dropped when the exit is first observed by a
+/// `wait --exit` request (which reaps the child) rather than by the daemon's
+/// periodic exit refresh.
+#[test]
+fn test_proxy_drops_route_after_wait_exit_reaps_process() {
+    let ctx = TestContext::new("t-proxy-wait-exit");
+    let backend = ExitOnFileBackend::start(&ctx);
+
+    // Each `wait --exit` polls every 100ms, which the daemon answers by reaping
+    // the child. The daemon's own refresh tick (200ms) can reap it first, in
+    // which case the bug is not exercised. Start several waiters with their
+    // polls staggered across the interval so a waiter almost always gets there
+    // first. This only affects how sensitive the test is to the bug; the check
+    // afterwards is bounded polling and never depends on the ordering.
+    let waiters: Vec<_> = (0..8)
+        .map(|_| {
+            let waiter = std::process::Command::new(assert_cmd::cargo::cargo_bin("agent-procs"))
+                .env("XDG_STATE_HOME", ctx.state_dir.path())
+                .args([
+                    "--session",
+                    &ctx.session,
+                    "wait",
+                    "web",
+                    "--exit",
+                    "--timeout",
+                    "30",
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(12));
+            waiter
         })
-    }
-    .unwrap_or_else(|| panic!("could not parse proxy port from stderr: {}", stderr));
-
-    // The route must work while the backend is alive, otherwise the cleanup
-    // check below would pass vacuously.
-    if let Err((code, body)) = poll_proxy(proxy_port, "web", |b| b == "backend-alive") {
-        panic!(
-            "proxy never forwarded to the live backend within {:?}: last curl exit={:?} body={:?}",
-            PROXY_POLL_TIMEOUT, code, body
+        .collect();
+    backend.stop();
+    for waiter in waiters {
+        let wait_output = waiter.wait_with_output().unwrap();
+        assert!(
+            wait_output.status.success(),
+            "wait --exit failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&wait_output.stdout),
+            String::from_utf8_lossy(&wait_output.stderr)
         );
     }
 
-    // Make the managed process exit.
-    std::fs::write(&stop_path, b"").unwrap();
-
-    if let Err((code, body)) = poll_proxy(proxy_port, "web", |b| {
-        b.contains("no running process named 'web'")
-    }) {
-        panic!(
-            "stale route was not removed within {:?} after process exit: last curl exit={:?} body={:?}",
-            PROXY_POLL_TIMEOUT, code, body
-        );
-    }
+    backend.assert_route_dropped();
 
     let _ = ctx
         .cmd()
