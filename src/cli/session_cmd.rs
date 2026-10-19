@@ -22,7 +22,22 @@ fn pid_entries() -> impl Iterator<Item = (String, std::fs::DirEntry)> {
         })
 }
 
+/// Refuse to read or delete files in a runtime dir we do not own.
+fn runtime_dir_usable() -> bool {
+    match paths::verify_socket_dir() {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        Err(e) => {
+            eprintln!("error: {}", e);
+            false
+        }
+    }
+}
+
 pub fn list() -> i32 {
+    if !runtime_dir_usable() {
+        return 1;
+    }
     let mut found = false;
     for (session_name, entry) in pid_entries() {
         if !found {
@@ -43,6 +58,9 @@ pub fn list() -> i32 {
 }
 
 pub fn clean() -> i32 {
+    if !runtime_dir_usable() {
+        return 1;
+    }
     for (session_name, entry) in pid_entries() {
         if !session::is_daemon_alive(&entry.path()) {
             let _ = std::fs::remove_file(paths::socket_path(&session_name));

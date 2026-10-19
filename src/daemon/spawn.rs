@@ -7,15 +7,8 @@ use std::process::{Child, Command, ExitStatus};
 /// current binary with the `--run-daemon SESSION` internal flag.
 /// This avoids the fork-inside-tokio-runtime problem.
 pub fn spawn_daemon(session: &str) -> std::io::Result<()> {
-    // Create socket base dir with restricted permissions
-    let socket_dir = paths::socket_base_dir();
-    fs::create_dir_all(&socket_dir)?;
-    // Set permissions to 0700 (owner only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&socket_dir, fs::Permissions::from_mode(0o700))?;
-    }
+    // Create the socket base dir (0700) or verify an existing one is ours.
+    paths::ensure_socket_dir()?;
 
     let state = paths::state_dir(session);
     fs::create_dir_all(state.join("logs"))?;
@@ -78,6 +71,14 @@ fn wait_for_daemon_ready(
 /// Entry point called when running as daemon (via --run-daemon flag in main.rs).
 /// This runs in a fresh process with no tokio runtime yet.
 pub async fn run_daemon(session: &str) -> i32 {
+    // Verify the runtime dir before touching anything under it (the state dir
+    // can resolve inside it): never write, bind, or create a PID file in an
+    // unverified dir.
+    if let Err(e) = paths::ensure_socket_dir() {
+        eprintln!("error: {}", e);
+        return 1;
+    }
+
     // Initialize file-based tracing subscriber before any other operations.
     // The daemon's stdout/stderr are redirected to /dev/null, so structured
     // logging to a file is the only way to capture diagnostics.
@@ -103,14 +104,6 @@ pub async fn run_daemon(session: &str) -> i32 {
     let socket_path = paths::socket_path(session);
     let pid_path = paths::pid_path(session);
 
-    // Ensure dirs exist
-    let socket_dir = paths::socket_base_dir();
-    let _ = std::fs::create_dir_all(&socket_dir);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700));
-    }
     let state = paths::state_dir(session);
     let _ = std::fs::create_dir_all(state.join("logs"));
 
