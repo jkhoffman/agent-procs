@@ -1,6 +1,6 @@
 # Reference
 
-Detailed usage for AgentProcs. The [README](../README.md) has the install steps and a short example.
+Detailed usage for AgentProcs. The [README](../README.md) has the install steps and a short example. To see how AgentProcs compares with other tools, read [Alternatives](alternatives.md).
 
 ## Config file
 

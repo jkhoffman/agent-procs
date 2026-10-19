@@ -24,11 +24,11 @@ agent-procs status
 agent-procs stop server
 ```
 
-Each command is a separate invocation. The first `run` starts the daemon, and later commands talk to it. For multi-process projects, put an `agent-procs.yaml` next to your code and use `agent-procs up` and `agent-procs down`. The config file, every command, restart policies, file watching, sessions, and the reverse proxy are covered in [docs/reference.md](docs/reference.md).
+Each command is a separate invocation. The first `run` starts the daemon, and later commands talk to it. For multi-process projects, put an `agent-procs.yaml` next to your code and use `agent-procs up` and `agent-procs down`. The config file, every command, restart policies, file watching, sessions, and the reverse proxy are covered in [docs/reference.md](https://github.com/jkhoffman/agent-procs/blob/main/docs/reference.md). For how it compares with tmux, PM2, Docker Compose and similar tools, see [docs/alternatives.md](https://github.com/jkhoffman/agent-procs/blob/main/docs/alternatives.md).
 
 ## Architecture
 
-Each CLI invocation is a short-lived client. A per-session daemon outlives the invocations, owns the control plane, and supervises each managed command as a process group, writing durable logs to disk. The CLI reaches the daemon over a Unix domain socket whose `0700` parent directory limits access to the current user. The main design decision is that all state lives in the daemon and on disk, not in the CLI, which is why a later agent tool call can pick up where an earlier one stopped. Managed commands keep your filesystem and network access, so use a container or VM when you need isolation. See [docs/architecture.md](docs/architecture.md) and [SECURITY.md](SECURITY.md) for details.
+Each CLI invocation is a short-lived client. A per-session daemon outlives the invocations, owns the control plane, and supervises each managed command as a process group, writing durable logs to disk. The CLI reaches the daemon over a Unix domain socket whose `0700` parent directory limits access to the current user. The main design decision is that all state lives in the daemon and on disk, not in the CLI, which is why a later agent tool call can pick up where an earlier one stopped. Managed commands keep your filesystem and network access, so use a container or VM when you need isolation. See [docs/architecture.md](https://github.com/jkhoffman/agent-procs/blob/main/docs/architecture.md) and [SECURITY.md](https://github.com/jkhoffman/agent-procs/blob/main/SECURITY.md) for details.
 
 ## Tests
 
