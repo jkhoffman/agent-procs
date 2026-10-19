@@ -1,7 +1,9 @@
 use crate::daemon::log_writer::OutputLine;
-use crate::daemon::process_manager::ProcessManager;
+use crate::daemon::process_manager::{
+    self, AfterStop, ExitWhy, Life, ProcessManager, RespawnReason, Waiter,
+};
 use crate::protocol::{self, ErrorCode, Response, Stream as ProtoStream};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::time::{self, Duration, MissedTickBehavior};
 
@@ -66,11 +68,42 @@ enum PmCommand {
     /// Internal: delayed auto-restart for a crashed process.
     AutoRestart {
         name: String,
+        generation: u64,
     },
     /// Internal: file watcher triggered restart.
     WatchRestart {
         name: String,
+        generation: u64,
     },
+    /// Internal: a teardown task finished with the leader's exit code.
+    StopFinished {
+        name: String,
+        generation: u64,
+        code: Option<i32>,
+    },
+}
+
+/// A `stop-all` waiting for the teardowns it started.
+struct StopAllBatch {
+    remaining: HashSet<String>,
+    replies: Vec<oneshot::Sender<Response>>,
+}
+
+fn stop_all_in_progress() -> Response {
+    actor_error("stop-all in progress")
+}
+
+fn not_found(target: &str) -> Response {
+    Response::Error {
+        code: ErrorCode::NotFound,
+        message: format!("process not found: {}", target),
+    }
+}
+
+fn stopped(name: &str) -> Response {
+    Response::Ok {
+        message: format!("stopped {}", name),
+    }
 }
 
 fn actor_error(msg: &str) -> Response {
@@ -224,6 +257,7 @@ pub struct ProcessManagerActor {
     self_tx: mpsc::Sender<PmCommand>,
     proxy_state_tx: watch::Sender<ProxyState>,
     proxy_port: Option<u16>,
+    stop_all: Option<StopAllBatch>,
 }
 
 impl ProcessManagerActor {
@@ -244,6 +278,7 @@ impl ProcessManagerActor {
             self_tx: tx,
             proxy_state_tx,
             proxy_port: None,
+            stop_all: None,
         };
 
         (handle, proxy_state_rx, actor)
@@ -274,14 +309,16 @@ impl ProcessManagerActor {
     /// Check for exited processes eligible for auto-restart, schedule delayed restarts.
     /// Also detects processes that have exhausted their `max_restarts` and marks them failed.
     fn schedule_restarts(&mut self) {
+        if self.stop_all.is_some() {
+            return;
+        }
         let (restartable, exhausted) = self.pm.classify_restart_candidates();
 
-        // Mark exhausted processes as failed
         for name in &exhausted {
             if let Some(p) = self.pm.find(name)
                 && let Some(ref policy) = p.restart_policy
                 && let Some(max) = policy.max_restarts
-                && let Some(ref tx) = p.supervisor_tx
+                && let Some(tx) = p.supervisor_tx()
             {
                 let msg = format!("[agent-procs] Max restarts ({}) exhausted", max);
                 let _ = tx.try_send(msg);
@@ -292,19 +329,20 @@ impl ProcessManagerActor {
             self.publish_proxy_state();
         }
 
-        // Schedule delayed restarts for eligible processes
         for name in restartable {
-            if let Some(p) = self.pm.find_mut(&name) {
-                p.restart_pending = true;
+            if let Some(p) = self.pm.find_mut(&name)
+                && let Life::Exited { restart_timer, .. } = &mut p.life
+            {
+                *restart_timer = true;
                 let delay_ms = p
                     .restart_policy
                     .as_ref()
                     .map_or(1000, |rp| rp.restart_delay_ms);
                 let tx = self.self_tx.clone();
-                let name_clone = name.clone();
+                let generation = p.generation;
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    let _ = tx.send(PmCommand::AutoRestart { name: name_clone }).await;
+                    let _ = tx.send(PmCommand::AutoRestart { name, generation }).await;
                 });
             }
         }
@@ -322,10 +360,13 @@ impl ProcessManagerActor {
                 watch,
                 reply,
             } => {
-                let mut resp = self
-                    .pm
-                    .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port)
-                    .await;
+                if self.stop_all.is_some() {
+                    let _ = reply.send(stop_all_in_progress());
+                    return;
+                }
+                let mut resp =
+                    self.pm
+                        .spawn_process(&command, name, cwd.as_deref(), env.as_ref(), port);
                 // Attach restart/watch config if spawn succeeded
                 let has_watch = watch.is_some();
                 if let Response::RunOk { ref name, .. } = resp
@@ -343,9 +384,7 @@ impl ProcessManagerActor {
                     // setup_watcher already cleared watch_config so status won't
                     // falsely report the process as watched.
                     let msg = format!("[agent-procs] Watch setup failed: {}", e);
-                    if let Some(p) = self.pm.find(name)
-                        && let Some(tx) = &p.supervisor_tx
-                    {
+                    if let Some(tx) = self.pm.find(name).and_then(|p| p.supervisor_tx()) {
                         let _ = tx.try_send(msg);
                     }
                 }
@@ -363,27 +402,48 @@ impl ProcessManagerActor {
                 let _ = reply.send(resp);
             }
             PmCommand::Stop { target, reply } => {
-                // Tear down watcher on stop
-                if let Some(p) = self.pm.find_mut(&target) {
-                    p.watch_handle = None;
+                self.pm.refresh_exit_states();
+                let Some(p) = self.pm.find_mut(&target) else {
+                    let _ = reply.send(not_found(&target));
+                    return;
+                };
+                let name = p.name.clone();
+                match &mut p.life {
+                    Life::Stopping { then, waiters, .. } => {
+                        *then = AfterStop::Park;
+                        waiters.push(Waiter::Stop(reply));
+                    }
+                    Life::Exited { inc: None, .. } => {
+                        p.watch_handle = None;
+                        let _ = reply.send(stopped(&name));
+                    }
+                    Life::Running(_) | Life::Exited { inc: Some(_), .. } => {
+                        self.start_teardown(&name, AfterStop::Park, Waiter::Stop(reply));
+                    }
                 }
-                let resp = self.pm.stop_process(&target).await;
-                self.publish_proxy_state();
-                let _ = reply.send(resp);
             }
-            PmCommand::StopAll { reply } => {
-                let resp = self.pm.stop_all().await;
-                self.publish_proxy_state();
-                let _ = reply.send(resp);
-            }
+            PmCommand::StopAll { reply } => self.handle_stop_all(reply),
             PmCommand::Restart { target, reply } => {
-                let resp = self.pm.restart_process(&target).await;
-                // Recreate file watcher if watch config was preserved
-                if let Response::RunOk { ref name, .. } = resp {
-                    let _ = self.setup_watcher(name);
+                if self.stop_all.is_some() {
+                    let _ = reply.send(stop_all_in_progress());
+                    return;
                 }
-                self.publish_proxy_state();
-                let _ = reply.send(resp);
+                self.pm.refresh_exit_states();
+                let Some(p) = self.pm.find_mut(&target) else {
+                    let _ = reply.send(not_found(&target));
+                    return;
+                };
+                let name = p.name.clone();
+                if let Life::Stopping { then, waiters, .. } = &mut p.life {
+                    *then = AfterStop::Respawn(RespawnReason::Manual);
+                    waiters.push(Waiter::Restart(reply));
+                } else {
+                    self.start_teardown(
+                        &name,
+                        AfterStop::Respawn(RespawnReason::Manual),
+                        Waiter::Restart(reply),
+                    );
+                }
             }
             PmCommand::Status { reply } | PmCommand::StatusSnapshot { reply } => {
                 let _ = reply.send(self.build_status());
@@ -396,9 +456,9 @@ impl ProcessManagerActor {
             }
             PmCommand::IsProcessExited { target, reply } => {
                 let exited = self.pm.is_process_exited(&target);
-                // Checking may have reaped the child. The periodic refresh only
-                // publishes when it reaps something itself, so publish here or
-                // the proxy keeps routing to the dead process.
+                // Checking may have observed an exit. The periodic refresh only
+                // publishes when it sees one itself, so publish here or the
+                // proxy keeps routing to the dead process.
                 self.publish_proxy_state();
                 let _ = reply.send(exited);
             }
@@ -415,125 +475,241 @@ impl ProcessManagerActor {
             PmCommand::Subscribe { reply } => {
                 let _ = reply.send(self.pm.output_tx.subscribe());
             }
-            PmCommand::AutoRestart { name } => {
-                self.handle_auto_restart(&name).await;
-            }
-            PmCommand::WatchRestart { name } => {
-                self.handle_watch_restart(&name).await;
-            }
-        }
-    }
-
-    async fn handle_auto_restart(&mut self, name: &str) {
-        // Re-check guards
-        let should_restart = self
-            .pm
-            .find(name)
-            .is_some_and(|p| p.child.is_none() && !p.manually_stopped && p.restart_pending);
-        if !should_restart {
-            if let Some(p) = self.pm.find_mut(name) {
-                p.restart_pending = false;
-            }
-            return;
-        }
-
-        // Capture exit code before respawn (respawn_in_place removes the old record)
-        let prev_exit_code = self.pm.find(name).and_then(|p| p.exit_code);
-
-        // Increment count
-        if let Some(p) = self.pm.find_mut(name) {
-            p.restart_count += 1;
-        }
-
-        // Respawn
-        match self.pm.respawn_in_place(name).await {
-            Ok(()) => {
-                // Send success annotation to new capture task
-                if let Some(p) = self.pm.find(name) {
-                    let count = p.restart_count;
-                    let max = p.restart_policy.as_ref().and_then(|rp| rp.max_restarts);
-                    let exit = prev_exit_code.map_or("signal".into(), |c: i32| c.to_string());
-                    let msg = match max {
-                        Some(m) => {
-                            format!(
-                                "[agent-procs] Restarted (exit {}, attempt {}/{})",
-                                exit, count, m
-                            )
-                        }
-                        None => {
-                            format!("[agent-procs] Restarted (exit {}, attempt {})", exit, count)
-                        }
-                    };
-                    if let Some(tx) = &p.supervisor_tx {
-                        let _ = tx.send(msg).await;
-                    }
+            PmCommand::AutoRestart { name, generation } => {
+                if self.stop_all.is_some() {
+                    return;
                 }
-                // Recreate file watcher for the new process (old one was
-                // dropped when respawn_in_place removed the process record)
-                let _ = self.setup_watcher(name);
-            }
-            Err(err) => {
-                // Broadcast failure (live only)
-                let msg = format!("[agent-procs] Restart failed: {}", err);
-                let _ = self.pm.output_tx.send(OutputLine {
-                    process: name.to_string(),
-                    stream: ProtoStream::Stdout,
-                    line: msg,
-                });
-            }
-        }
-
-        // Clear pending
-        if let Some(p) = self.pm.find_mut(name) {
-            p.restart_pending = false;
-        }
-        self.publish_proxy_state();
-    }
-
-    async fn handle_watch_restart(&mut self, name: &str) {
-        let should_restart = self.pm.find(name).is_some_and(|p| !p.manually_stopped);
-        if !should_restart {
-            return;
-        }
-
-        // Stop process (without manually_stopped)
-        if self.pm.find(name).is_some_and(|p| p.child.is_some()) {
-            let _ = self.pm.stop_process(name).await;
-            // Clear manually_stopped (stop_process sets it)
-            if let Some(p) = self.pm.find_mut(name) {
-                p.manually_stopped = false;
-            }
-        }
-
-        // Reset restart count (watch restarts are intentional)
-        if let Some(p) = self.pm.find_mut(name) {
-            p.restart_count = 0;
-            p.failed = false;
-        }
-
-        // Respawn
-        match self.pm.respawn_in_place(name).await {
-            Ok(()) => {
-                if let Some(p) = self.pm.find(name)
-                    && let Some(tx) = &p.supervisor_tx
+                if let Some(p) = self.pm.find_mut(&name)
+                    && p.generation == generation
+                    && matches!(
+                        p.life,
+                        Life::Exited {
+                            why: ExitWhy::Natural,
+                            restart_timer: true,
+                            ..
+                        }
+                    )
                 {
-                    let _ = tx
-                        .send("[agent-procs] File changed, restarted".to_string())
-                        .await;
+                    p.restart_count += 1;
+                    self.start_teardown(&name, AfterStop::Respawn(RespawnReason::Auto), None);
                 }
-                // Recreate watcher for the new process
-                let _ = self.setup_watcher(name);
             }
-            Err(err) => {
-                let _ = self.pm.output_tx.send(OutputLine {
-                    process: name.to_string(),
-                    stream: ProtoStream::Stdout,
-                    line: format!("[agent-procs] Watch restart failed: {}", err),
-                });
+            PmCommand::WatchRestart { name, generation } => {
+                if self.stop_all.is_some() {
+                    return;
+                }
+                if let Some(p) = self.pm.find_mut(&name)
+                    && p.generation == generation
+                    && !matches!(
+                        p.life,
+                        Life::Stopping { .. }
+                            | Life::Exited {
+                                why: ExitWhy::Manual,
+                                ..
+                            }
+                    )
+                {
+                    // Watch restarts are intentional, so they reset the crash budget.
+                    p.restart_count = 0;
+                    self.start_teardown(&name, AfterStop::Respawn(RespawnReason::Watch), None);
+                }
+            }
+            PmCommand::StopFinished {
+                name,
+                generation,
+                code,
+            } => self.finish_teardown(&name, generation, code).await,
+        }
+    }
+
+    /// Hand the live incarnation of `name` to a teardown task so the actor
+    /// keeps serving other commands for the length of the grace period.
+    fn start_teardown(&mut self, name: &str, then: AfterStop, waiter: impl Into<Option<Waiter>>) {
+        let Some(p) = self.pm.find_mut(name) else {
+            return;
+        };
+        p.watch_handle = None;
+        let generation = p.generation;
+        let waiters: Vec<Waiter> = waiter.into().into_iter().collect();
+        let (inc, leader_exit) = match std::mem::replace(&mut p.life, Life::vacant()) {
+            Life::Running(inc) => (Some(inc), None),
+            Life::Exited { code, inc, .. } => (inc, Some(code)),
+            Life::Stopping { .. } => unreachable!("callers join an in-flight stop instead"),
+        };
+        p.life = Life::Stopping {
+            leader_exit,
+            then,
+            waiters,
+        };
+        let tx = self.self_tx.clone();
+        let name = name.to_string();
+        tokio::spawn(async move {
+            let code = match inc {
+                // A panicking teardown still reports back, so waiters never hang.
+                Some(inc) => tokio::spawn(process_manager::teardown(inc, leader_exit))
+                    .await
+                    .unwrap_or(None),
+                None => leader_exit.flatten(),
+            };
+            let _ = tx
+                .send(PmCommand::StopFinished {
+                    name,
+                    generation,
+                    code,
+                })
+                .await;
+        });
+    }
+
+    async fn finish_teardown(&mut self, name: &str, generation: u64, code: Option<i32>) {
+        let Some(p) = self.pm.find_mut(name) else {
+            return;
+        };
+        if p.generation != generation {
+            return;
+        }
+        let Life::Stopping { then, waiters, .. } = std::mem::replace(
+            &mut p.life,
+            Life::Exited {
+                code,
+                why: ExitWhy::Manual,
+                inc: None,
+                restart_timer: false,
+            },
+        ) else {
+            unreachable!("only a Stopping record has a teardown in flight");
+        };
+
+        let restart_reply = match then {
+            AfterStop::Park => actor_error("restart superseded by stop"),
+            AfterStop::Respawn(reason) => self.respawn(name, reason, code).await,
+        };
+        for waiter in waiters {
+            match waiter {
+                Waiter::Stop(reply) => {
+                    let _ = reply.send(stopped(name));
+                }
+                Waiter::Restart(reply) => {
+                    let _ = reply.send(restart_reply.clone());
+                }
             }
         }
 
+        if let Some(batch) = &mut self.stop_all {
+            batch.remaining.remove(name);
+            if batch.remaining.is_empty() {
+                self.finish_stop_all();
+            }
+        }
         self.publish_proxy_state();
+    }
+
+    async fn respawn(
+        &mut self,
+        name: &str,
+        reason: RespawnReason,
+        prev_code: Option<i32>,
+    ) -> Response {
+        if reason == RespawnReason::Manual
+            && let Some(p) = self.pm.find_mut(name)
+        {
+            p.restart_count = 0;
+        }
+        let resp = self.pm.respawn(name, reason != RespawnReason::Manual).await;
+        match (&resp, reason) {
+            (Response::RunOk { .. }, _) => {
+                let marker = match reason {
+                    RespawnReason::Manual => None,
+                    RespawnReason::Watch => {
+                        Some("[agent-procs] File changed, restarted".to_string())
+                    }
+                    RespawnReason::Auto => self.pm.find(name).map(|p| {
+                        let exit = prev_code.map_or("signal".into(), |c| c.to_string());
+                        match p.restart_policy.as_ref().and_then(|rp| rp.max_restarts) {
+                            Some(m) => format!(
+                                "[agent-procs] Restarted (exit {}, attempt {}/{})",
+                                exit, p.restart_count, m
+                            ),
+                            None => format!(
+                                "[agent-procs] Restarted (exit {}, attempt {})",
+                                exit, p.restart_count
+                            ),
+                        }
+                    }),
+                };
+                if let Some(msg) = marker
+                    && let Some(tx) = self.pm.find(name).and_then(|p| p.supervisor_tx())
+                {
+                    let _ = tx.try_send(msg);
+                }
+                let _ = self.setup_watcher(name);
+            }
+            (Response::Error { message, .. }, RespawnReason::Auto | RespawnReason::Watch) => {
+                let label = if reason == RespawnReason::Auto {
+                    "Restart"
+                } else {
+                    "Watch restart"
+                };
+                let _ = self.pm.output_tx.send(OutputLine {
+                    process: name.to_string(),
+                    stream: ProtoStream::Stdout,
+                    line: format!("[agent-procs] {} failed: {}", label, message),
+                });
+            }
+            _ => {}
+        }
+        resp
+    }
+
+    fn handle_stop_all(&mut self, reply: oneshot::Sender<Response>) {
+        if let Some(batch) = &mut self.stop_all {
+            batch.replies.push(reply);
+            return;
+        }
+        self.pm.refresh_exit_states();
+        let mut remaining = HashSet::new();
+        for name in self.pm.names() {
+            let Some(p) = self.pm.find_mut(&name) else {
+                continue;
+            };
+            match &mut p.life {
+                Life::Stopping { then, .. } => {
+                    *then = AfterStop::Park;
+                    remaining.insert(name);
+                }
+                Life::Exited { inc: None, .. } => {}
+                Life::Running(_) | Life::Exited { inc: Some(_), .. } => {
+                    self.start_teardown(&name, AfterStop::Park, None);
+                    remaining.insert(name);
+                }
+            }
+        }
+        self.stop_all = Some(StopAllBatch {
+            remaining,
+            replies: vec![reply],
+        });
+        if self
+            .stop_all
+            .as_ref()
+            .is_some_and(|b| b.remaining.is_empty())
+        {
+            self.finish_stop_all();
+        }
+        self.publish_proxy_state();
+    }
+
+    fn finish_stop_all(&mut self) {
+        let Some(batch) = self.stop_all.take() else {
+            return;
+        };
+        // Run and Restart were refused while the batch ran, so every record
+        // left is one this stop-all covered.
+        self.pm.clear();
+        for reply in batch.replies {
+            let _ = reply.send(Response::Ok {
+                message: "all processes stopped".into(),
+            });
+        }
     }
 
     /// Set up a file watcher for a process if it has a `WatchConfig`.
@@ -560,12 +736,13 @@ impl ProcessManagerActor {
 
         let tx = self.self_tx.clone();
         let proc_name = name.to_string();
+        let generation = self.pm.find(name).map_or(0, |p| p.generation);
         let (restart_tx, mut restart_rx) = tokio::sync::mpsc::channel::<String>(16);
 
         // Forward watch events to PmCommand::WatchRestart
         tokio::spawn(async move {
             while let Some(name) = restart_rx.recv().await {
-                let _ = tx.send(PmCommand::WatchRestart { name }).await;
+                let _ = tx.send(PmCommand::WatchRestart { name, generation }).await;
             }
         });
 

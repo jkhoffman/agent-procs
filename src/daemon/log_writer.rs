@@ -92,15 +92,38 @@ impl LogWriteState<'_> {
     }
 }
 
-/// Reads lines from a child's stdout or stderr, writes each line to a log file
-/// with a sidecar `.idx` index, and broadcasts it to subscribers.
+/// A log file and its `.idx` companion, opened before the child is spawned so
+/// that an unwritable log fails the spawn instead of silently dropping output.
+pub struct LogSink {
+    file: tokio::fs::File,
+    idx_writer: IndexWriter,
+}
+
+impl LogSink {
+    pub fn open(log_path: &Path, seq_base: u64) -> Result<Self, String> {
+        let at =
+            |path: &Path, e: std::io::Error| format!("cannot open log {}: {}", path.display(), e);
+        let file = std::fs::File::create(log_path).map_err(|e| at(log_path, e))?;
+        let idx_path = idx_path_for(log_path);
+        let idx_writer = IndexWriter::create(&idx_path, seq_base).map_err(|e| at(&idx_path, e))?;
+        Ok(Self {
+            file: tokio::fs::File::from_std(file),
+            idx_writer,
+        })
+    }
+}
+
+/// Reads lines from a child's stdout or stderr, writes each line to `sink`
+/// (rotating at `log_path`), and broadcasts it to subscribers.
 ///
 /// Also accepts a supervisor channel for synthetic log lines (e.g. restart
 /// annotations). After the pipe hits EOF, continues draining the supervisor
-/// channel until it is closed.
+/// channel until it is closed. A `true` on `cancel` ends capture early, still
+/// flushing the index, for pipes held open by processes that outlive a stop.
 #[allow(clippy::too_many_arguments)]
 pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
     reader: R,
+    sink: LogSink,
     log_path: &Path,
     process_name: &str,
     stream: ProtoStream,
@@ -109,29 +132,12 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
     max_rotated_files: u32,
     seq: Arc<AtomicU64>,
     mut sup_rx: tokio::sync::mpsc::Receiver<String>,
+    mut cancel: tokio::sync::watch::Receiver<bool>,
 ) {
     let mut lines = BufReader::new(reader).lines();
-    let file = match tokio::fs::File::create(log_path).await {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::warn!(path = %log_path.display(), process = %process_name, error = %e, "cannot create log file");
-            return;
-        }
-    };
-
-    let idx_path = idx_path_for(log_path);
-    let seq_base = seq.load(Ordering::Relaxed);
-    let idx_writer = match IndexWriter::create(&idx_path, seq_base) {
-        Ok(w) => w,
-        Err(e) => {
-            tracing::warn!(path = %idx_path.display(), error = %e, "cannot create index file");
-            return;
-        }
-    };
-
     let mut state = LogWriteState {
-        file: Some(file),
-        idx_writer,
+        file: Some(sink.file),
+        idx_writer: sink.idx_writer,
         bytes_written: 0,
         lines_since_idx_flush: 0,
         log_path,
@@ -143,27 +149,35 @@ pub async fn capture_output<R: tokio::io::AsyncRead + Unpin>(
         seq: &seq,
     };
 
-    // Main loop: select between pipe reads and supervisor channel
+    let mut cancelled = false;
     loop {
         let line = tokio::select! {
             result = lines.next_line() => {
                 match result {
                     Ok(Some(line)) => line,
-                    _ => break, // pipe EOF — fall through to drain supervisor channel
+                    _ => break,
                 }
             }
             Some(sup_line) = sup_rx.recv() => sup_line,
+            Ok(()) = cancel.changed() => {
+                cancelled = true;
+                break;
+            }
         };
 
         state.write_line(&line).await;
     }
 
-    // After pipe EOF, drain remaining supervisor lines
-    while let Some(sup_line) = sup_rx.recv().await {
-        state.write_line(&sup_line).await;
+    if cancelled {
+        while let Ok(sup_line) = sup_rx.try_recv() {
+            state.write_line(&sup_line).await;
+        }
+    } else {
+        while let Some(sup_line) = sup_rx.recv().await {
+            state.write_line(&sup_line).await;
+        }
     }
 
-    // Flush remaining buffered index entries
     let _ = state.idx_writer.flush();
 }
 
@@ -222,6 +236,10 @@ mod tests {
         rx
     }
 
+    fn no_cancel() -> tokio::sync::watch::Receiver<bool> {
+        tokio::sync::watch::channel(false).1
+    }
+
     #[tokio::test]
     async fn test_capture_output_creates_index() {
         let dir = tempfile::tempdir().unwrap();
@@ -234,6 +252,7 @@ mod tests {
         let reader = &input[..];
         capture_output(
             reader,
+            LogSink::open(&log_path, seq.load(Ordering::Relaxed)).unwrap(),
             &log_path,
             "test",
             ProtoStream::Stdout,
@@ -242,6 +261,7 @@ mod tests {
             5,
             seq.clone(),
             dummy_sup_rx(),
+            no_cancel(),
         )
         .await;
 
@@ -280,6 +300,7 @@ mod tests {
         let stdout_input = b"out1\nout2\n";
         capture_output(
             &stdout_input[..],
+            LogSink::open(&stdout_path, seq.load(Ordering::Relaxed)).unwrap(),
             &stdout_path,
             "test",
             ProtoStream::Stdout,
@@ -288,6 +309,7 @@ mod tests {
             5,
             seq.clone(),
             dummy_sup_rx(),
+            no_cancel(),
         )
         .await;
 
@@ -298,6 +320,7 @@ mod tests {
         let stderr_input = b"err1\nerr2\n";
         capture_output(
             &stderr_input[..],
+            LogSink::open(&stderr_path, seq.load(Ordering::Relaxed)).unwrap(),
             &stderr_path,
             "test",
             ProtoStream::Stderr,
@@ -306,6 +329,7 @@ mod tests {
             5,
             seq.clone(),
             dummy_sup_rx(),
+            no_cancel(),
         )
         .await;
 
@@ -336,6 +360,7 @@ mod tests {
 
         capture_output(
             input.as_bytes(),
+            LogSink::open(&log_path, seq.load(Ordering::Relaxed)).unwrap(),
             &log_path,
             "test",
             ProtoStream::Stdout,
@@ -344,6 +369,7 @@ mod tests {
             3,
             seq,
             dummy_sup_rx(),
+            no_cancel(),
         )
         .await;
 
@@ -391,6 +417,7 @@ mod tests {
 
         capture_output(
             server,
+            LogSink::open(&log_path_clone, seq.load(Ordering::Relaxed)).unwrap(),
             &log_path_clone,
             "test",
             ProtoStream::Stdout,
@@ -399,6 +426,7 @@ mod tests {
             5,
             seq.clone(),
             sup_rx,
+            no_cancel(),
         )
         .await;
 
