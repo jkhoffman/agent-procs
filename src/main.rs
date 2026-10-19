@@ -5,9 +5,9 @@ use clap_complete::Shell;
 #[command(
     name = "agent-procs",
     version,
-    about = "Concurrent process runner for AI agents",
+    about = "Rust process supervisor for agent-driven development: daemon persistence across CLI invocations, dependency-ordered startup, readiness checks, durable logs, restart policies.",
     long_about = "\
-Concurrent process runner for AI agents.
+Rust process supervisor for agent-driven development: daemon persistence across CLI invocations, dependency-ordered startup, readiness checks, durable logs, restart policies.
 
 Processes run in a background daemon and persist across CLI invocations.
 Use --session to isolate process groups (e.g. per-project).",
