@@ -1,245 +1,39 @@
-# AgentProcs
+Rust process supervisor for agent-driven development: daemon persistence across CLI invocations, dependency-ordered startup, readiness checks, durable logs, restart policies.
 
-Keep development services alive, observable, and controllable across separate AI coding-agent tool calls.
-
-Coding agents often start an API, web app, or worker in one shell, then lose track of the process on a later tool call. AgentProcs keeps those services under a per-session daemon so the next call can inspect logs, check status, restart a process, or stop everything cleanly.
-
-AgentProcs is for developers using agentic coding workflows on Linux and macOS (Unix only). It provides same-user process supervision, not sandboxing; managed commands retain your filesystem and network access. See [Architecture and security boundary](#architecture-and-security-boundary) for details.
-
-- A daemon persists across CLI calls, with project and session isolation.
-- Readiness checks and dependency ordering start services in the right sequence.
-- Durable indexed logs and JSON status keep process state available to agents and scripts.
-- Restart policies and file watching recover development services; an optional proxy gives them named localhost URLs.
-
-![Animated terminal demo where dependent API and web services start, the API exits with status 42 and restarts as generation 2, and both services shut down cleanly](docs/assets/agent-procs-demo.gif)
-
-This is a real, reproducible local run. Follow [the demo instructions](docs/demo/README.md) to play or record it yourself.
-
-[![CI](https://github.com/jkhoffman/agent-procs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jkhoffman/agent-procs/actions/workflows/ci.yml) [![Crates.io](https://img.shields.io/crates/v/agent-procs)](https://crates.io/crates/agent-procs) [![docs.rs](https://img.shields.io/docsrs/agent-procs)](https://docs.rs/agent-procs) [![License: MIT](https://img.shields.io/crates/l/agent-procs)](LICENSE) ![Platform: Linux and macOS](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-informational)
-
-**Engineering proof:** [Unit tests live alongside the source](https://github.com/jkhoffman/agent-procs/tree/main/src), with [property, integration, and end-to-end tests](https://github.com/jkhoffman/agent-procs/tree/main/tests); current [v0.6.3 release binaries](https://github.com/jkhoffman/agent-procs/releases/tag/v0.6.3) target Linux and macOS on x86_64 and ARM64.
-
-[Quick start](#quick-start) · [Architecture and security](#architecture-and-security-boundary)
+Coding agents often start an API, web app, or worker in one shell, then lose track of the process on a later tool call. AgentProcs keeps those services under a per-session daemon, so the next call can read logs, check status, restart a process, or stop everything cleanly. It is for developers using agentic coding workflows on Linux and macOS (Unix only), and it supervises processes without sandboxing them.
 
 ## Install
 
-```
-cargo install agent-procs
-```
-
-## Quick start
+AgentProcs needs Rust 1.88 or newer. To run the code on the main branch, install from a clone:
 
 ```bash
-# Start a process
-agent-procs run "npm run dev" --name server
+git clone https://github.com/jkhoffman/agent-procs.git
+cd agent-procs
+cargo install --path . --locked
+```
 
-# Auto-restart on crash (up to 5 times)
-agent-procs run "npm start" --name api --autorestart on-failure --max-restarts 5
+`cargo install agent-procs` installs the latest crates.io release, 0.6.3, which does not include the unreleased changes listed in [CHANGELOG.md](CHANGELOG.md).
 
-# Restart when source files change
-agent-procs run "npm run dev" --name server --watch "src/**"
+## Usage
 
-# Wait for it to be ready
-agent-procs wait server --until "Listening on" --timeout 30
-
-# Check output
+```bash
+agent-procs run "python3 -u -m http.server 8000" --name server
+agent-procs wait server --until "Serving HTTP" --timeout 30
 agent-procs logs server --tail 50
-
-# See what's running
 agent-procs status
-
-# Stop it
 agent-procs stop server
 ```
 
-## Config file
+Each command is a separate invocation. The first `run` starts the daemon, and later commands talk to it. For multi-process projects, put an `agent-procs.yaml` next to your code and use `agent-procs up` and `agent-procs down`. The config file, every command, restart policies, file watching, sessions, and the reverse proxy are covered in [docs/reference.md](docs/reference.md).
 
-Create an `agent-procs.yaml` to manage multiple processes together:
+## Architecture
 
-```yaml
-session: myproject                          # optional — isolates this project's processes
-proxy: true                                 # optional — enables reverse proxy
-proxy_port: 9095                            # optional — pin proxy to a specific port
+Each CLI invocation is a short-lived client. A per-session daemon outlives the invocations, owns the control plane, and supervises each managed command as a process group, writing durable logs to disk. The CLI reaches the daemon over a Unix domain socket whose `0700` parent directory limits access to the current user. The main design decision is that all state lives in the daemon and on disk, not in the CLI, which is why a later agent tool call can pick up where an earlier one stopped. Managed commands keep your filesystem and network access, so use a container or VM when you need isolation. See [docs/architecture.md](docs/architecture.md) and [SECURITY.md](SECURITY.md) for details.
 
-processes:
-  db:
-    cmd: docker compose up postgres
-    ready: "ready to accept connections"
-    autorestart: always
-    max_restarts: 3
-  api:
-    cmd: ./start-api-server
-    cwd: ./backend
-    env:
-      DATABASE_URL: postgres://localhost:5432/mydb
-    ready: "Listening on :8080"
-    port: 8080
-    depends_on: [db]
-    autorestart: on-failure
-    watch:
-      - "src/**"
-      - "config/*"
-    watch_ignore:
-      - "*.generated.ts"
-```
-
-Processes start in dependency order; independent ones run concurrently.
+## Tests
 
 ```bash
-agent-procs up                    # start all
-agent-procs up --only db,api      # start specific ones
-agent-procs down                  # stop all
+cargo test --locked --all-features -- --test-threads=1
 ```
 
-### Field reference
-
-**Per-process fields:**
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `cmd` | yes | Shell command to execute |
-| `cwd` | no | Working directory (relative to config file location) |
-| `env` | no | Environment variables (key: value map) |
-| `ready` | no | Stdout pattern that signals the process is ready |
-| `depends_on` | no | List of process names that must be ready first |
-| `port` | no | Port number — injected as `PORT` and `HOST=127.0.0.1` env vars |
-| `autorestart` | no | Restart policy: `always`, `on-failure`, or `never` (default) |
-| `max_restarts` | no | Maximum restart attempts (unlimited if omitted) |
-| `restart_delay` | no | Delay between crash and restart in ms (default: 1000) |
-| `watch` | no | List of glob patterns — restart process when matched files change |
-| `watch_ignore` | no | Additional glob patterns to ignore (`.git`, `node_modules`, `target`, `__pycache__` always ignored) |
-
-**Top-level fields:**
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `session` | no | Session name (overridden by `--session` CLI flag) |
-| `proxy` | no | Enable reverse proxy (default: false) |
-| `proxy_port` | no | Pin proxy to a specific port (default: auto-assign from 9090-9190) |
-
-## Reverse proxy
-
-Give processes stable named URLs instead of port numbers. Opt-in via `proxy: true` in config or `--proxy` on the CLI.
-
-```bash
-$ agent-procs up
-Proxy listening on http://localhost:9090
-started api (http://api.localhost:9090)
-started web (http://web.localhost:9090)
-```
-
-- Processes without an explicit `port` get one auto-assigned (4000-4999 range)
-- `PORT` and `HOST=127.0.0.1` are injected into the process env (user env takes precedence)
-- Each session gets its own proxy port, so two projects can both have `api` without conflict
-
-Ad-hoc usage without a config file:
-
-```bash
-agent-procs run "node server.js" --name api --port 3001 --proxy
-# → http://api.localhost:9090
-```
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `run <cmd> [--name N] [--port P] [--proxy] [--autorestart MODE] [--max-restarts N] [--restart-delay MS] [--watch GLOB]... [--watch-ignore GLOB]...` | Spawn a background process |
-| `stop <name>` | Stop a process |
-| `stop-all` | Stop all processes |
-| `restart <name>` | Restart a process |
-| `status [--json]` | Show all process statuses |
-| `logs <name> [--tail N] [--follow] [--stderr] [--all]` | View process output |
-| `wait <name> --until <pattern> [--regex] [--timeout N]` | Wait for output pattern |
-| `wait <name> --exit [--timeout N]` | Wait for process to exit |
-| `up [--only X,Y] [--config path] [--proxy]` | Start from config file |
-| `down` | Stop config-managed processes |
-| `session list` | List active sessions |
-| `session clean` | Remove stale sessions |
-| `ui` | Open terminal UI |
-| `completions <shell>` | Generate shell completions (bash, zsh, fish, powershell) |
-
-## Restart policies
-
-Automatically recover from crashes without agent intervention.
-
-```bash
-# Restart on non-zero exit, up to 5 times with 2s delay
-agent-procs run "npm start" --name api \
-  --autorestart on-failure --max-restarts 5 --restart-delay 2000
-
-# Always restart (even clean exits), unlimited attempts
-agent-procs run "worker" --name bg --autorestart always
-```
-
-| Mode | Behavior |
-|------|----------|
-| `always` | Restart on any exit |
-| `on-failure` | Restart only on non-zero exit |
-| `never` | Don't restart (default) |
-
-When `max_restarts` is exhausted, the process enters `Failed` state. Manual `stop` disables auto-restart; `restart` re-enables it and resets the count.
-
-Supervisor annotations (`[agent-procs] Restarted`, `Max restarts exhausted`) are written to disk logs and visible in `logs --tail`, `--follow`, and the TUI.
-
-## File watch mode
-
-Auto-restart processes when source files change.
-
-```bash
-agent-procs run "npm run dev" --name server --watch "src/**" --watch "config/*"
-```
-
-- Uses OS-native file watching (FSEvents on macOS, inotify on Linux) with 500ms debounce
-- `.git`, `node_modules`, `target`, and `__pycache__` are always ignored
-- Add `--watch-ignore "*.log"` for additional ignore patterns
-- Watch restarts reset the restart count (they're intentional, not crashes)
-- File changes can revive a `Failed` process
-
-## Sessions
-
-Use `--session` to isolate process groups (e.g. per-project):
-
-```bash
-agent-procs --session projectA run "make serve" --name app
-agent-procs --session projectB run "make serve" --name app
-agent-procs --session projectA status   # only shows projectA's processes
-```
-
-## Alternatives
-
-AgentProcs is intentionally narrow for host-process control in agent-driven development; other tools fit different operating models. Linked tool names and notes point to official documentation.
-
-| Tool | Persistent model / isolation | Readiness, status, and logs | Best fit |
-|------|------------------------------|-----------------------------|----------|
-| AgentProcs | A per-session host daemon persists across CLI calls; sessions separate process groups but do not sandbox them. | Dependency-ordered startup with bounded stdout string or regex readiness waits; after a timeout, startup warns and continues. `status --json`; durable indexed logs; crash policies and native file watching. | Agent-driven Unix development workflows. |
-| [`nohup`](https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html) | Runs one command with hangup signals ignored; control remains with normal shell and PID tools. | Writes to `nohup.out` or redirected output. Readiness, named sessions, reconnectable control, and machine-readable status are not documented as built-in workflows in the reviewed manual. | One command must survive logout, and PID/file control is enough. |
-| [`tmux`](https://github.com/tmux/tmux/wiki/Getting-Started) | Detached, reconnectable terminal sessions with window and pane separation; terminal persistence is not process supervision. | Formatted listings, pane history, and `pipe-pane`; readiness and dependency workflows or JSON status are not documented as built-in workflows in the reviewed docs. | Interactive terminals that must be reattached later. |
-| [`PM2`](https://pm2.keymetrics.io/docs/usage/quick-start/) | A host daemon manages named apps and ecosystem files. | PM2 normally detects Node's listen event; [`--wait-ready`](https://pm2.keymetrics.io/docs/usage/signals-clean-restart/) instead waits for app IPC (`process.send('ready')`). Neither matches stdout. `jlist` JSON; [stored and streamed logs](https://pm2.keymetrics.io/docs/usage/log-management/); restart, watch, boot, and cluster support. | A mature host application manager, especially for long-running or Node.js apps. |
-| [`Docker Compose`](https://docs.docker.com/compose/) | Project-scoped containers, optionally detached, with images, networks, and volumes. | `depends_on` sets order; readiness requires a [`service_healthy` condition and healthcheck](https://docs.docker.com/compose/how-tos/startup-order/). [`ps --format json`](https://docs.docker.com/reference/cli/docker/compose/ps/), aggregated logs, [restart policies](https://docs.docker.com/reference/compose-file/services/#restart), and [Compose Watch](https://docs.docker.com/compose/how-tos/file-watch/). | Container-based stacks where those boundaries and healthchecks are the desired model. |
-| [`Overmind`](https://github.com/DarthSim/overmind) | A tmux-backed Procfile runner with working-directory socket and daemon controls. | Text status plus multiplexed or `echo` output; readiness/dependency gating and durable indexed logs are not documented as built-in workflows in the reviewed README; selected processes can auto-restart. | An existing Procfile with direct tmux attachment. |
-| [`Foreman`](https://ddollar.github.io/foreman/) | Runs a Procfile directly or exports it; the reviewed manual does not document a reconnectable Foreman daemon/status workflow. | Interleaved stdout; readiness and dependencies are not documented as built-ins. Export targets include systemd, runit, supervisord, and launchd; their runtime behavior belongs to the target supervisor. | A lightweight Procfile runner or native-supervisor configuration generator. |
-
-### Use another tool when
-
-- `nohup` fits when one command only needs to survive logout and PID/files are enough.
-- Choose `tmux` when a reconnectable interactive terminal is the main need.
-- PM2 suits apps that need an established manager with Node support, restarts, boot integration, metrics, or clustering.
-- Docker Compose is the better model when the stack should use containers, images, networks, volumes, and healthchecks.
-- Overmind fits a project that already has a Procfile and needs direct tmux attachment.
-- Foreman works for a lightweight Procfile workflow or export to a native supervisor.
-
-## Architecture and security boundary
-
-![AgentProcs architecture showing stateless CLI invocations, the protected Unix socket, persistent per-session daemon, managed process groups, durable logs, and optional localhost proxy](docs/assets/architecture.svg)
-
-Each [Quick start](#quick-start) command is a short-lived CLI client, while a per-session daemon persists across invocations and owns the control plane. CLI requests cross a Unix domain socket whose `0700` parent directory limits access to the current user; the daemon supervises process groups, durable session logs, and the optional [Reverse proxy](#reverse-proxy).
-
-AgentProcs provides process supervision, not sandboxing: managed commands retain the current user's filesystem and network access. Use a container or VM when isolation is required; see [Sessions](#sessions) for operational separation and [SECURITY.md](SECURITY.md) for the complete security model.
-
-## Exit codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Error (timeout, connection failure, unexpected response) |
-| 2 | No logs found for target process |
+The tests start real daemons and processes, so `--test-threads=1` runs them one at a time.
