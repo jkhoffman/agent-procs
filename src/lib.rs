@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-//! `agent-procs` — a concurrent process runner for AI agents.
+//! `agent-procs`: a Rust process supervisor for agent-driven development.
 //!
 //! Processes run in a background daemon and persist across CLI invocations.
 //! Communication happens over a per-session Unix domain socket using a

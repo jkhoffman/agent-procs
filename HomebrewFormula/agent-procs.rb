@@ -1,5 +1,5 @@
 class AgentProcs < Formula
-  desc "Concurrent process runner for AI agents"
+  desc "Process supervisor for agent-driven development"
   homepage "https://github.com/jkhoffman/agent-procs"
   url "https://github.com/jkhoffman/agent-procs/archive/808e125d1dd9baf3087f13eec71785f63de26c49.tar.gz"
   version "0.6.3"
