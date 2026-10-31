@@ -48,8 +48,12 @@ or tampering with PID files.
 ### Process group isolation
 
 Each managed child process is spawned in its own process group. When a process
-is stopped, `SIGTERM` is sent to the entire process group, ensuring that child
-processes of managed processes are also terminated cleanly.
+is stopped, `SIGTERM` is sent to the entire process group, and `SIGKILL` follows
+after 2 seconds, so child processes of managed processes are terminated too.
+The group leader is not reaped until the group has been killed, so its
+process-group id cannot be reused by an unrelated process while the daemon may
+still signal it. A process that leaves the group (for example with `setsid`)
+is not reached.
 
 ### Reverse proxy
 
