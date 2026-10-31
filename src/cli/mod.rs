@@ -25,6 +25,14 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 pub async fn connect(session: &str, auto_spawn: bool) -> Result<UnixStream, ClientError> {
+    // Never trust a PID file or socket from a directory we do not own: a
+    // local attacker could otherwise impersonate the daemon.
+    match paths::verify_socket_dir() {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(ClientError::ConnectionFailed(e)),
+    }
+
     let socket = paths::socket_path(session);
     let pid = paths::pid_path(session);
 
@@ -36,9 +44,25 @@ pub async fn connect(session: &str, auto_spawn: bool) -> Result<UnixStream, Clie
         }
     }
 
-    UnixStream::connect(&socket)
+    let stream = UnixStream::connect(&socket)
         .await
-        .map_err(ClientError::ConnectionFailed)
+        .map_err(ClientError::ConnectionFailed)?;
+
+    // Defense in depth: the daemon must be running as us.
+    let peer = stream.peer_cred().map_err(ClientError::ConnectionFailed)?;
+    let me = nix::unistd::geteuid().as_raw();
+    if peer.uid() != me {
+        return Err(ClientError::ConnectionFailed(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing to talk to {}: socket owned by uid {}, expected {}",
+                socket.display(),
+                peer.uid(),
+                me
+            ),
+        )));
+    }
+    Ok(stream)
 }
 
 /// Serialize a request and write it to the socket.
